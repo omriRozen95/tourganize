@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: lint, types, imports, tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format
+        run: ruff format --check .
+
+      - name: Types
+        run: mypy --strict tourganize
+
+      # The architectural gate. A failure here is a design regression, not a lint nit:
+      # see docs/architecture/decisions.md before touching a contract.
+      - name: Import boundaries
+        run: lint-imports
+
+      - name: Tests
+        run: pytest
+
+  container:
+    name: build the app image and run doctor in it
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: docker compose --profile dev-cpu build
+
+      - name: Doctor
+        run: docker compose --profile dev-cpu run --rm app tourganize doctor
+
+      - name: Confirm the container runs as a non-root user
+        run: docker compose --profile dev-cpu run --rm app id -u | grep -qx 10001

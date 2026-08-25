@@ -150,43 +150,53 @@ telemetry) and F20 (GPU profile).
 ## 3. Package layout
 
 ```
-tourganize/
-  domain/                 # pure: no third-party imports, ever
-    trip/                 # TripPlan, PlanComponent, Selection, PlanCompleteness
-    requirements/         # RequirementSchema, FieldSpec, RequirementSet, GapReport
-    catalog/              # ComponentKind, ComponentCatalog, PriorityPolicy, PlanningAgenda
-    options/              # PlanOption, OptionSlate, OptionQuery, Money, Provenance
-  dialogue/               # pure: PlanningSession, DialogueState, DialogueDirector, AssistantAct
-  ports/                  # abstract protocols only, stdlib-typed
-  application/            # PlanningService, ExportService, Composition Root helpers
-  language/               # PromptLibrary, locale detection, MessageCatalogue, bidi shaping
+tourganize/                 # ✔ F01
+  __main__.py             # ✔ `python -m tourganize`
+  py.typed                # ✔ the package ships type information
+  domain/                 # ✔ pure: no third-party imports, ever
+    trip/                 # ✔ TripPlan, PlanComponent, Selection, PlanCompleteness      (F02)
+    requirements/         # ✔ RequirementSchema, FieldSpec, RequirementSet, GapReport   (F03)
+    catalog/              # ✔ ComponentKind, ComponentCatalog, PriorityPolicy, Agenda   (F02/F04)
+    options/              # ✔ PlanOption, OptionSlate, OptionQuery, Money, Provenance   (F02/F06)
+  dialogue/               # ✔ pure: PlanningSession, DialogueState, DialogueDirector    (F05)
+  ports/                  # ✔ abstract protocols only, stdlib-typed
+    platform.py           # ✔ Clock, TelemetrySink, TelemetryEvent                      (F01)
+  application/            # ✔ Composition Root and application services
+    composition.py        # ✔ build_container: the only place adapters are constructed  (F01)
+    diagnostics.py        # ✔ what `tourganize doctor` reports                          (F01)
+  language/               # ✔ PromptLibrary, locale detection, MessageCatalogue, bidi   (F08/F10)
   adapters/
-    llm/                  # fake/, claude_code/, hosted/
-    options/              # fixture/, world/, live/
-    knowledge/            # ingestion/, vector/, tuned/
-    tools/                # fastmcp_broker/, recorded/
-    presentation/         # terminal/, scripted/, web/
-    export/               # text/, typeset/
-    persistence/          # memory/, sqlite/
-    telemetry/            # jsonl/, stdout/
-  platform/               # Settings, logging setup, errors, clock
-  cli.py                  # entry points: chat, resume, export, docs, catalog
+    clock/                # ✔ system/, fake/                                            (F01)
+    telemetry/            # ✔ jsonl/, null/                                             (F01)
+    options/              # ✔ fixture/, world/, live/                                   (F06, F17, F24)
+    presentation/         # ✔ terminal/, scripted/, web/                                (F07, F25)
+    llm/                  #   fake/, claude_code/, hosted/                              (F08, F09, F21)
+    knowledge/            #   ingestion/, vector/, tuned/                               (F18, F19, F23)
+    tools/                #   fastmcp_broker/, recorded/                                (F15)
+    export/               #   text/, typeset/                                           (F13, F14)
+    persistence/          #   memory/, sqlite/                                          (F12)
+  platform/               # ✔ Settings, secrets, logging setup, errors
+  cli.py                  # ✔ doctor, and stubs for chat, resume, export, docs, catalog
 services/
   model_service/          # own container: HTTP façade + Inference Engine (F20)
   mcp_feasibility/        # own container: local FastMCP service (F16)
   model_tuning/           # own container: LoRA tuning jobs (F23, optional)
-config/
-  catalog/components.yaml # Component Kinds, weights, schemas  (data, not code)
-  prompts/<version>/      # versioned Prompt Templates
-  messages/<locale>.yaml  # Message Catalogue
+config/                   # ✔ directory exists; contents arrive with the features below
+  catalog/components.yaml # Component Kinds, weights, schemas  (data, not code)   (F02)
+  prompts/<version>/      # versioned Prompt Templates                            (F08)
+  messages/<locale>.yaml  # Message Catalogue                                     (F10)
 fixtures/
-  options/                # Fixture Provider data
-  cassettes/              # recorded Tool Calls
-  conversations/          # Golden Conversations
-docker/                   # Dockerfiles, compose profiles: dev-cpu, gpu, mcp
-tests/
-  unit/ integration/ conversations/ contracts/
+  options/                # Fixture Provider data                                 (F06)
+  cassettes/              # recorded Tool Calls                                   (F15)
+  conversations/          # Golden Conversations                                  (F11)
+docker/                   # ✔ Dockerfiles, compose profiles: dev-cpu ✔, mcp (F16), gpu (F20)
+tests/                    # ✔ see tests/README.md for the conventions
+  unit/ integration/ contracts/ conversations/ architecture/
 ```
+
+**✔ marks what exists today** (after F01); an unmarked directory is created by the feature
+named beside it, which also fills a marked-but-empty package. A sub-package is never created
+before the feature that puts something in it — the empty tree is documentation, not code.
 
 ---
 

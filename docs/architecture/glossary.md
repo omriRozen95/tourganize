@@ -115,6 +115,12 @@ Rules that produced this list:
 | Term | Meaning |
 |---|---|
 | **Composition Root** | The single place where adapters are chosen from configuration and wired into the domain. Nothing else constructs adapters. |
+| **Container** | What the Composition Root returns: one slot per port, holding the adapter chosen for this process. The only object that knows which adapters are in use. |
+| **Fake** | An in-process adapter of a port, shipped by the feature that introduces the port, written so no test needs a network, a key or a GPU. A Fake's shape may never differ from the port contract. |
+| **Clock** | Port for reading the current moment. Nothing calls the wall clock directly, so a session can be replayed with the timestamps it was recorded with. |
+| **Telemetry Event** | One structured record handed to the Telemetry Sink: a `kind`, an optional session id, the moment it occurred, and a free `fields` mapping. The Turn Ledger is a `kind` of Telemetry Event, not a second mechanism. |
+| **Secret Value** | The wrapper every secret is held in from the moment Settings is built. It redacts in `repr`, `str` and `format`; reading the real value takes an explicit `reveal()` call, which makes every use of a secret greppable. |
+| **Doctor** | The `tourganize doctor` command: resolved Settings with secrets redacted, the selected adapters, and a pass/fail line per wired port. The first thing to run in a new environment. |
 | **Settings** | The typed, validated configuration object. All keys are `TOURGANIZE_*` environment variables with documented defaults. |
 | **Session Repository** | Port for persisting and reloading Planning Sessions (and thereby Trip Plans). |
 | **Telemetry Sink** | Port receiving Turn Ledger entries and other structured events. |

@@ -1,0 +1,27 @@
+# Compose profiles, one per hardware story. `dev-cpu` is the only one F01 defines; F16 adds
+# `mcp` and F20 adds `gpu`, each in its own feature.
+name: tourganize
+
+services:
+  app:
+    profiles: ["dev-cpu"]
+    build:
+      context: ..
+      dockerfile: docker/app.Dockerfile
+    image: tourganize-app:dev
+    working_dir: /app
+    init: true
+    environment:
+      TOURGANIZE_ENV: dev
+      TOURGANIZE_LOG_FORMAT: human
+      TOURGANIZE_CONFIG_DIR: /app/config
+      TOURGANIZE_DATA_DIR: /var/lib/tourganize
+    volumes:
+      # The repository is mounted so an edit is visible without a rebuild; state lives in a
+      # named volume so it survives `--rm` and never lands in the working tree.
+      - ..:/app
+      - tourganize-data:/var/lib/tourganize
+    command: ["tourganize", "doctor"]
+
+volumes:
+  tourganize-data:
