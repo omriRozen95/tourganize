@@ -68,8 +68,7 @@ def test_a_disabled_kind_is_listed_but_not_plannable(tmp_path: Path) -> None:
 def test_a_fourth_kind_needs_no_python_change(tmp_path: Path) -> None:
     """The whole point of the catalog: adding a topic is an entry in a file."""
     catalog = catalog_from(
-        SAMPLE_CATALOG
-        + "  - kind_key: delta\n"
+        SAMPLE_CATALOG + "  - kind_key: delta\n"
         "    message_key: component.delta\n"
         "    priority_weight: 50\n"
         "    schema_key: delta.v1\n"

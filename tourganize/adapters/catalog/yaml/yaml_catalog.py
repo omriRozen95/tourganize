@@ -146,8 +146,7 @@ def _entries(document: object, path: Path) -> tuple[Mapping[str, object], ...]:
     for position, entry in enumerate(declared, start=1):
         if not isinstance(entry, Mapping):
             raise CatalogError(
-                f"invalid Component Catalog {path}: kind {position} is not a mapping "
-                f"({entry!r})"
+                f"invalid Component Catalog {path}: kind {position} is not a mapping ({entry!r})"
             )
         entries.append(entry)
     return tuple(entries)

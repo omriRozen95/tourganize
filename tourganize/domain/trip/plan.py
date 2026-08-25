@@ -81,7 +81,7 @@ class TripPlan:
         reads.
         """
         mentioned = [item for item in self.components.values() if item.is_mentioned]
-        mentioned.sort(key=lambda item: (item.mentioned_on_turn or 0))
+        mentioned.sort(key=lambda item: item.mentioned_on_turn or 0)
         return tuple(item.kind_key for item in mentioned)
 
     def completeness(self) -> PlanCompleteness:

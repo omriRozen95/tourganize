@@ -46,8 +46,7 @@ class ComponentKind:
         _require_text(self.schema_key, "schema_key")
         if type(self.priority_weight) is not int:
             raise InvariantViolationError(
-                f"{self.kind_key}: priority_weight must be an integer, "
-                f"got {self.priority_weight!r}"
+                f"{self.kind_key}: priority_weight must be an integer, got {self.priority_weight!r}"
             )
         if type(self.requires_outcome_of) is not tuple:
             raise InvariantViolationError(

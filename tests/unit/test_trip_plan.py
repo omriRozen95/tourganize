@@ -176,7 +176,7 @@ def test_selecting_an_option_that_was_never_offered_raises(
 def test_selecting_from_a_superseded_round_raises(
     frozen_clock: FrozenClock, option_factory: OptionFactory
 ) -> None:
-    """"The second one" from a refined-away slate is exactly the mix-up this refuses."""
+    """ "The second one" from a refined-away slate is exactly the mix-up this refuses."""
     plan = plan_at(frozen_clock.now())
     source(plan, "alpha")
     plan.record_slate(OptionSlate("alpha", 0, (option_factory("a1"),)))

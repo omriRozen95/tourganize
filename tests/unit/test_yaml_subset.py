@@ -60,11 +60,7 @@ def test_a_hash_inside_quotes_is_not_a_comment() -> None:
 
 def test_a_block_sequence_of_mappings_indented_under_its_key() -> None:
     document = read(
-        "kinds:\n"
-        "  - kind_key: alpha\n"
-        "    weight: 300\n"
-        "  - kind_key: beta\n"
-        "    weight: 200\n"
+        "kinds:\n  - kind_key: alpha\n    weight: 300\n  - kind_key: beta\n    weight: 200\n"
     )
 
     assert document == {
@@ -96,15 +92,7 @@ def test_a_quoted_key_in_a_flow_mapping() -> None:
 
 
 def test_nested_blocks() -> None:
-    document = read(
-        "outer:\n"
-        "  inner:\n"
-        "    leaf: 1\n"
-        "  list:\n"
-        "    - one\n"
-        "    - two\n"
-        "after: done\n"
-    )
+    document = read("outer:\n  inner:\n    leaf: 1\n  list:\n    - one\n    - two\nafter: done\n")
 
     assert document == {
         "outer": {"inner": {"leaf": 1}, "list": ["one", "two"]},

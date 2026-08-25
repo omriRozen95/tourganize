@@ -29,8 +29,7 @@ class Selection:
             )
         if self.kind_key != self.option.kind_key:
             raise InvariantViolationError(
-                f"Selection({self.kind_key!r}) holds an option of kind "
-                f"{self.option.kind_key!r}"
+                f"Selection({self.kind_key!r}) holds an option of kind {self.option.kind_key!r}"
             )
         if type(self.chosen_at_turn) is not int:
             raise InvariantViolationError(
