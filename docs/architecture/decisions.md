@@ -1,7 +1,8 @@
 # Architecture Decision Log
 
-One entry per decision the design brief required (D1–D12). Every entry states the decision, why, what
-it costs, and **which feature reverses it** — because reversibility is the point of the Lego-piece rule.
+One entry per decision the design brief required (D1–D12), plus decisions taken while implementing
+(D13 onwards). Every entry states the decision, why, what it costs, and **which feature reverses it** —
+because reversibility is the point of the Lego-piece rule.
 
 Status values: `accepted` (in force), `accepted-provisional` (in force, pending a client answer that
 cannot block work).
@@ -316,3 +317,32 @@ unless configured otherwise.
 **Reversal path.** Any of candidates 2–5 can be added as an additional MCP service without touching
 the Tool Broker; capability names are configuration. Dropping feasibility entirely means removing one
 config entry and the annotation step in F17.
+
+---
+
+## D13 — Configuration files are read by a strict in-tree YAML subset reader, not a YAML library
+
+**Status:** accepted · **Owning feature:** [F02](../features/F02-trip-plan-domain-core.md) · **Reversed by:** any feature that needs YAML we do not support
+
+**Decision.** `config/` is read by `tourganize/platform/yaml_subset.py`, about two hundred lines of
+standard library, rather than by PyYAML. It accepts block mappings, block sequences, single-line flow
+collections, the scalar types the config files use, comments and one optional leading `---`. Everything
+else — anchors, aliases, tags, block scalars, multiple documents, tab indentation, a plain scalar
+containing `": "` — is **refused** with a `ConfigurationError` naming the file and the line.
+
+**Rationale.** F01 states that the base install stays pure-Python and that the CPU image builds with
+nothing to fetch, and `tourganize doctor` has to run in that image unmodified. The Component Catalog —
+and, later, the Requirement Schemas, the prompt manifests and the Message Catalogue — use a small,
+boring corner of YAML, so the choice is between a runtime dependency for the whole distribution and a
+reader for the corner we actually use. The repository already parses its own `KEY=value` secrets file
+for the same reason. Being strict is what makes this safe: an unsupported construct is a loud failure
+at load, never a quiet mis-reading of what someone meant.
+
+**Cost.** A config file cannot use YAML features the reader does not know, and F10's Message Catalogue
+in particular may want block scalars for long Hebrew strings. The reader also has to be trusted, which
+is why it carries its own unit suite covering both the subset and every refusal. Neither cost lands on
+the domain: parsing sits in `platform`, behind whichever port reads the file.
+
+**Reversal path.** Add `pyyaml` to `[project.dependencies]` and replace the body of
+`read_yaml_subset` with `yaml.safe_load`, keeping the same `ConfigurationError` on failure. One module,
+one dependency line; no caller changes, because every caller already receives plain Python data.

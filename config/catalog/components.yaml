@@ -1,0 +1,34 @@
+# The Component Catalog — the declarative registry of Component Kinds.
+#
+# This file is the only place in Tourganize where a travel topic exists. Adding a kind is an
+# entry here and nothing else: no Python change, no subclass, no branch. An automated test
+# asserts that grepping the package for these keys returns nothing.
+#
+# kind_key            lower_snake_case identity; used in config, message keys and telemetry
+# message_key         what the Message Catalogue (F10) phrases this kind by
+# priority_weight     higher is planned earlier *within* an agenda band (F04)
+# schema_key          the Requirement Schema that says what must be known (F03)
+# requires_outcome_of Kinds whose Selection this one reads. Ordering only — never a
+#                     precondition: a traveller who wants only a hotel is never blocked
+#                     waiting on flights they never mentioned.
+# enabled             false hides a kind from planning without deleting its declaration
+version: 1
+kinds:
+  - kind_key: air_travel
+    message_key: component.air_travel
+    priority_weight: 300
+    schema_key: air_travel.v1
+    requires_outcome_of: []
+    enabled: true
+  - kind_key: lodging
+    message_key: component.lodging
+    priority_weight: 200
+    schema_key: lodging.v1
+    requires_outcome_of: [air_travel]     # lodging dates follow the chosen flights
+    enabled: true
+  - kind_key: ground_transport
+    message_key: component.ground_transport
+    priority_weight: 100
+    schema_key: ground_transport.v1
+    requires_outcome_of: [lodging]        # picked up near where the traveller sleeps
+    enabled: true

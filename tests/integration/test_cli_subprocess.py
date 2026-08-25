@@ -10,6 +10,10 @@ from pathlib import Path
 from tourganize import __version__
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+#: The catalog that ships with the repository. Pointing the subprocess at it — rather than at
+#: a copy written into ``tmp_path`` — is what makes these tests prove that the *shipped* file
+#: loads, which no unit test can.
+SHIPPED_CATALOG = REPO_ROOT / "config" / "catalog" / "components.yaml"
 
 
 def _run(*arguments: str, tmp_path: Path, **extra: str) -> subprocess.CompletedProcess[str]:
@@ -18,6 +22,7 @@ def _run(*arguments: str, tmp_path: Path, **extra: str) -> subprocess.CompletedP
         "PYTHONPATH": str(REPO_ROOT),
         "TOURGANIZE_ENV": "test",
         "TOURGANIZE_CONFIG_DIR": str(tmp_path / "config"),
+        "TOURGANIZE_CATALOG_PATH": str(SHIPPED_CATALOG),
         "TOURGANIZE_DATA_DIR": str(tmp_path / "var"),
     }
     environment.update(extra)
@@ -88,3 +93,39 @@ def test_json_logs_are_machine_readable(tmp_path: Path) -> None:
     records = [json.loads(line) for line in lines]
     assert any(record["kind"] == "startup" for record in records)
     assert all(record["logger"].startswith("tourganize") for record in records)
+
+
+def test_the_shipped_catalog_loads_and_lists_three_kinds(tmp_path: Path) -> None:
+    result = _run("catalog", "show", tmp_path=tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    separator = next(index for index, line in enumerate(lines) if set(line) == {"-", " "})
+    kinds = [line.split()[0] for line in lines[separator + 1 :] if line.strip()]
+    assert len(kinds) == 3
+    assert result.stdout.count("component.") == 3
+
+
+def test_the_shipped_catalog_validates(tmp_path: Path) -> None:
+    result = _run("catalog", "validate", tmp_path=tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "no problems found" in result.stdout
+
+
+def test_a_catalog_with_a_cycle_exits_3(tmp_path: Path) -> None:
+    broken = tmp_path / "cyclic.yaml"
+    broken.write_text(
+        "version: 1\n"
+        "kinds:\n"
+        "  - {kind_key: one, message_key: component.one, priority_weight: 1,"
+        " schema_key: one.v1, requires_outcome_of: [two]}\n"
+        "  - {kind_key: two, message_key: component.two, priority_weight: 2,"
+        " schema_key: two.v1, requires_outcome_of: [one]}\n",
+        encoding="utf-8",
+    )
+
+    result = _run("catalog", "validate", tmp_path=tmp_path, TOURGANIZE_CATALOG_PATH=str(broken))
+
+    assert result.returncode == 3
+    assert "dependency cycle" in result.stderr

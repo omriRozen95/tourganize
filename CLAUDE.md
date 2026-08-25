@@ -4,11 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is right now
 
-**A specification repository with its foundation built.** F01 has landed: there is an installable
-`tourganize` package, a test suite, `pyproject.toml`, a CPU-only container and CI. What it does is
-still almost nothing — `tourganize --version` and `tourganize doctor` — but the layout, the ports,
-the quality gates and the boundary enforcement every later feature lands in all exist. The remaining
-24 feature specs are still the plan, implemented one at a time, in order.
+**A specification repository with its foundation and its domain core built.** F01 and F02 have
+landed: there is an installable `tourganize` package, a test suite, a CPU-only container and CI; and
+on top of that a Trip Plan made of Plan Components whose *types* are declared as data in
+`config/catalog/components.yaml`. Working commands are `tourganize --version`, `doctor`,
+`catalog show` and `catalog validate`. The remaining 23 feature specs are still the plan, implemented
+one at a time, in order.
 
 Four kinds of file, with different rules:
 
@@ -19,8 +20,8 @@ Four kinds of file, with different rules:
 | `docs/**` | The deliverable | Edit freely, but honour the consistency rules below. |
 | `tourganize/**`, `tests/**`, `config/**`, `docker/**` | The implementation | Governed by the feature file it belongs to plus the invariants below. |
 
-The next thing to build is `docs/features/F02-trip-plan-domain-core.md`. Read `docs/roadmap.md` before
-starting any implementation work.
+The next thing to build is `docs/features/F03-requirement-schemas-and-gap-analysis.md`. Read
+`docs/roadmap.md` before starting any implementation work.
 
 ## Reading order for a new session
 
@@ -83,6 +84,7 @@ lint-imports                              # import-linter: the DDD boundary enfo
 pytest                                    # full suite
 pytest tests/unit/test_settings_defaults.py::test_every_documented_default            # single test
 tourganize doctor                         # resolved settings, adapter selection, per-port health
+tourganize catalog show                   # the declared Component Kinds; `validate` exits 0 or 3
 docker compose --profile dev-cpu run --rm app tourganize doctor
 ```
 
@@ -93,10 +95,11 @@ rather than skip — that is the test which proves the gate rejects a planted vi
 If a contract has to be weakened to make a feature compile, that needs an ADR entry, not a config
 tweak.
 
-Commands added by later features (each defined in its own spec): `tourganize catalog show|validate|gaps|agenda`
-(F02–F04), `chat` (F07), `llm probe` (F08), `messages lint` (F10), `eval` / `eval report` / `eval parity`
-(F11, F21), `sessions` / `resume` (F12), `export` (F13), `tools list|call` (F15), `docs add|list|query|index`
-(F18, F19). Run one golden conversation with `tourganize eval --only <conversation_id>`.
+Commands added by later features (each defined in its own spec): `tourganize catalog gaps` (F03) and
+`catalog agenda` (F04), `chat` (F07), `llm probe` (F08), `messages lint` (F10), `eval` / `eval report` /
+`eval parity` (F11, F21), `sessions` / `resume` (F12), `export` (F13), `tools list|call` (F15),
+`docs add|list|query|index` (F18, F19). Run one golden conversation with
+`tourganize eval --only <conversation_id>`.
 
 ## Architecture: the two rules everything follows
 

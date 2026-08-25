@@ -154,18 +154,21 @@ tourganize/                 # ✔ F01
   __main__.py             # ✔ `python -m tourganize`
   py.typed                # ✔ the package ships type information
   domain/                 # ✔ pure: no third-party imports, ever
+    errors.py             # ✔ TourganizeError (the root) and the domain's own errors     (F02)
     trip/                 # ✔ TripPlan, PlanComponent, Selection, PlanCompleteness      (F02)
     requirements/         # ✔ RequirementSchema, FieldSpec, RequirementSet, GapReport   (F03)
-    catalog/              # ✔ ComponentKind, ComponentCatalog, PriorityPolicy, Agenda   (F02/F04)
+    catalog/              # ✔ ComponentKind, catalog invariants, PriorityPolicy, Agenda (F02/F04)
     options/              # ✔ PlanOption, OptionSlate, OptionQuery, Money, Provenance   (F02/F06)
   dialogue/               # ✔ pure: PlanningSession, DialogueState, DialogueDirector    (F05)
   ports/                  # ✔ abstract protocols only, stdlib-typed
     platform.py           # ✔ Clock, TelemetrySink, TelemetryEvent                      (F01)
+    catalog.py            # ✔ ComponentCatalog, later PriorityPolicy                    (F02/F04)
   application/            # ✔ Composition Root and application services
     composition.py        # ✔ build_container: the only place adapters are constructed  (F01)
     diagnostics.py        # ✔ what `tourganize doctor` reports                          (F01)
   language/               # ✔ PromptLibrary, locale detection, MessageCatalogue, bidi   (F08/F10)
   adapters/
+    catalog/              # ✔ yaml/, memory/                                            (F02)
     clock/                # ✔ system/, fake/                                            (F01)
     telemetry/            # ✔ jsonl/, null/                                             (F01)
     options/              # ✔ fixture/, world/, live/                                   (F06, F17, F24)
@@ -175,14 +178,14 @@ tourganize/                 # ✔ F01
     tools/                #   fastmcp_broker/, recorded/                                (F15)
     export/               #   text/, typeset/                                           (F13, F14)
     persistence/          #   memory/, sqlite/                                          (F12)
-  platform/               # ✔ Settings, secrets, logging setup, errors
-  cli.py                  # ✔ doctor, and stubs for chat, resume, export, docs, catalog
+  platform/               # ✔ Settings, secrets, logging setup, errors, config reader
+  cli.py                  # ✔ doctor, catalog show|validate, stubs for the rest
 services/
   model_service/          # own container: HTTP façade + Inference Engine (F20)
   mcp_feasibility/        # own container: local FastMCP service (F16)
   model_tuning/           # own container: LoRA tuning jobs (F23, optional)
 config/                   # ✔ directory exists; contents arrive with the features below
-  catalog/components.yaml # Component Kinds, weights, schemas  (data, not code)   (F02)
+  catalog/components.yaml # ✔ Component Kinds, weights, schemas (data, not code)  (F02)
   prompts/<version>/      # versioned Prompt Templates                            (F08)
   messages/<locale>.yaml  # Message Catalogue                                     (F10)
 fixtures/
@@ -194,7 +197,7 @@ tests/                    # ✔ see tests/README.md for the conventions
   unit/ integration/ contracts/ conversations/ architecture/
 ```
 
-**✔ marks what exists today** (after F01); an unmarked directory is created by the feature
+**✔ marks what exists today** (after F02); an unmarked directory is created by the feature
 named beside it, which also fills a marked-but-empty package. F01 created the adapter
 sub-packages up to F07 and no further, so the near shape is visible without inventing folders
 for features nobody has started — an empty package is documentation, not code, and beyond F07

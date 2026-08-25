@@ -14,6 +14,7 @@ def test_every_documented_default() -> None:
     assert settings.log_level == "INFO"
     assert settings.log_format == "human"
     assert settings.config_dir == Path("config")
+    assert settings.catalog_path == Path("config/catalog/components.yaml")
     assert settings.data_dir == Path("var")
     assert settings.telemetry_sink == "jsonl"
     assert settings.telemetry_path == Path("var/telemetry.jsonl")
@@ -35,6 +36,24 @@ def test_explicit_log_format_wins_over_the_env_derived_default() -> None:
 def test_telemetry_path_follows_the_data_dir() -> None:
     settings = Settings.from_env({"TOURGANIZE_DATA_DIR": "/srv/state"})
     assert settings.telemetry_path == Path("/srv/state/telemetry.jsonl")
+
+
+def test_the_catalog_path_follows_the_config_dir() -> None:
+    settings = Settings.from_env({"TOURGANIZE_CONFIG_DIR": "/srv/conf"})
+    assert settings.catalog_path == Path("/srv/conf/catalog/components.yaml")
+
+
+def test_an_explicit_catalog_path_wins_over_the_config_dir() -> None:
+    settings = Settings.from_env(
+        {"TOURGANIZE_CONFIG_DIR": "/srv/conf", "TOURGANIZE_CATALOG_PATH": "/etc/kinds.yaml"}
+    )
+    assert settings.catalog_path == Path("/etc/kinds.yaml")
+
+
+def test_a_missing_catalog_file_is_not_a_settings_error() -> None:
+    """Absence is reported by `doctor` and refused by the command that needs it, not here."""
+    settings = Settings.from_env({"TOURGANIZE_CATALOG_PATH": "/nowhere/components.yaml"})
+    assert settings.catalog_path == Path("/nowhere/components.yaml")
 
 
 def test_the_telemetry_path_default_does_not_depend_on_the_selected_sink() -> None:

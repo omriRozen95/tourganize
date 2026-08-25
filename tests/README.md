@@ -36,6 +36,20 @@ differ from the real adapter's.** Same fields, same errors, same ordering guaran
 - `settings_factory(**overrides)` — `Settings` pointed at the test's `tmp_path`, so no test
   writes into the repository. Overrides are `TOURGANIZE_*` keys.
 - `frozen_clock` — a `FrozenClock` pinned to a fixed moment.
+- `catalog_file` — a valid Component Catalog inside the config directory `settings_factory`
+  points at. Requesting it is how a test says "a healthy installation": from F02 on, an
+  installation with no catalog fails `doctor`.
+- `option_factory(option_id, kind_key="alpha", *, price=None, **facts)` — a `PlanOption` with
+  plausible Provenance, so a test names only what it is about.
+- `write_catalog(config_dir, text=SAMPLE_CATALOG)` and `SAMPLE_CATALOG` are plain functions,
+  imported as `from conftest import write_catalog` by the few tests that need a *broken*
+  catalog. `tests` is on `pythonpath` in `pyproject.toml` so that import does not depend on
+  pytest's import mode; the same mechanism is what lets `tests/architecture` import
+  `boundaries`.
+
+Catalog fixtures use neutral `kind_key`s — `alpha`, `beta`, `gamma` — rather than the shipped
+travel topics. A test about the machinery should not have to name a topic, and it keeps the
+rule that no topic string appears in `tourganize/` easy to see.
 
 ## Running
 
