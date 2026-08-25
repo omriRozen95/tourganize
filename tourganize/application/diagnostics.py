@@ -129,8 +129,8 @@ def _check_telemetry_sink(container: Container) -> CheckResult:
             fields={"source": "doctor"},
         )
     )
-    degraded = getattr(sink, "degraded", False)
-    if degraded:
-        target = getattr(sink, "path", "its destination")
-        return CheckResult("telemetry_sink", False, f"{name} could not write to {target}")
+    if sink.degraded:
+        return CheckResult(
+            "telemetry_sink", False, f"{name} stopped recording after a write failure"
+        )
     return CheckResult("telemetry_sink", True, f"{name} accepted a probe event")

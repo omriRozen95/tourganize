@@ -4,19 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is right now
 
-**A specification repository. There is no source code yet** — no Python package, no tests, no
-`pyproject.toml`. The product of the work so far is the *decomposition*: an architecture plus 25
-feature specs to be implemented one at a time, in order.
+**A specification repository with its foundation built.** F01 has landed: there is an installable
+`tourganize` package, a test suite, `pyproject.toml`, a CPU-only container and CI. What it does is
+still almost nothing — `tourganize --version` and `tourganize doctor` — but the layout, the ports,
+the quality gates and the boundary enforcement every later feature lands in all exist. The remaining
+24 feature specs are still the plan, implemented one at a time, in order.
 
-Three kinds of file, with different rules:
+Four kinds of file, with different rules:
 
 | Path | What it is | Rule |
 |---|---|---|
 | `project_demands.md` | The client's original words | **Never edit.** Source of truth for *intent*. |
 | `architecture_brief.md` | The normalised brief that commissioned `docs/` | Do not edit. Source of truth for the *form* of the deliverable. |
 | `docs/**` | The deliverable | Edit freely, but honour the consistency rules below. |
+| `tourganize/**`, `tests/**`, `config/**`, `docker/**` | The implementation | Governed by the feature file it belongs to plus the invariants below. |
 
-The next thing to build is `docs/features/F01-project-foundation.md`. Read `docs/roadmap.md` before
+The next thing to build is `docs/features/F02-trip-plan-domain-core.md`. Read `docs/roadmap.md` before
 starting any implementation work.
 
 ## Reading order for a new session
@@ -34,7 +37,7 @@ treat its Definition of Done as the acceptance criteria.
 
 ## Commands
 
-### Available now (spec-integrity checks)
+### Spec-integrity checks (after editing `docs/`)
 
 The docs carry invariants that are easy to break by hand. Re-run these after editing anything in
 `docs/`:
@@ -62,11 +65,15 @@ cd docs && grep -rhoE '\]\([^)]+\.md[^)]*\)' . | sed -E 's/\]\(([^)#]+).*/\1/' |
 Every feature file must keep all of: `- **Bounded context:**`, `- **Depends on:**`, `- **Unlocks:**`,
 `- **Size:**`, `- **Status of the codebase when this starts:**`, `## Purpose`, `## Starting state`,
 `## Scope — what to implement`, `## Contract (the Lego connectors)` (with `**Inputs:**`,
-`**Outputs:**`, `**Ports consumed:**`, `**Ports provided:**`, `**Config/env keys introduced**`,
-`**Errors/failure modes:**`), `## Out of scope`, `## Replaceability notes`, `## Definition of done`,
-`## Open questions / risks`.
+`**Outputs:**`, `**Ports consumed:**`, `**Ports provided:**`, `**Config/env keys introduced:**`,
+`**Errors/failure modes:**`), `## Out of scope`, `## Replaceability notes`,
+`## Definition of done`, `## Open questions / risks`.
 
-### After F01 lands (specified by F01, do not invent alternatives)
+A parenthetical qualifier may precede the colon on `**Config/env keys introduced:**` — F16, F20 and
+F24 use it to mark keys that are deliberately *not* `TOURGANIZE_*` (see Naming discipline). Match
+that heading by prefix, not exactly.
+
+### Code gates (all four run in CI, on 3.11 and 3.12)
 
 ```bash
 pip install -e ".[dev]"
@@ -74,10 +81,13 @@ ruff check . && ruff format --check .     # lint + format
 mypy --strict tourganize                  # type gate
 lint-imports                              # import-linter: the DDD boundary enforcement
 pytest                                    # full suite
-pytest tests/unit/test_agenda.py::test_mentioned_first_is_not_overridable_by_weight   # single test
+pytest tests/unit/test_settings_defaults.py::test_every_documented_default            # single test
 tourganize doctor                         # resolved settings, adapter selection, per-port health
 docker compose --profile dev-cpu run --rm app tourganize doctor
 ```
+
+`lint-imports` must be on `PATH` for `tests/architecture/test_import_linter_enforcement.py` to run
+rather than skip — that is the test which proves the gate rejects a planted violation.
 
 `lint-imports` is not optional tooling — it is the mechanism that keeps the domain dependency-free.
 If a contract has to be weakened to make a feature compile, that needs an ADR entry, not a config

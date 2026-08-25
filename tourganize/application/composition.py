@@ -27,14 +27,13 @@ Slots the roadmap will add here, with the feature that owns each:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from types import MappingProxyType
 from typing import Final
 
 from tourganize.adapters.clock.system import SystemClock
 from tourganize.adapters.telemetry.jsonl import JsonlTelemetrySink
 from tourganize.adapters.telemetry.null import NullTelemetrySink
-from tourganize.platform.settings import TELEMETRY_FILENAME, Settings
+from tourganize.platform.settings import Settings, default_telemetry_path
 from tourganize.ports.platform import Clock, TelemetrySink
 
 __all__ = ["Container", "build_container"]
@@ -90,10 +89,7 @@ def build_container(settings: Settings) -> Container:
 def _build_telemetry_sink(settings: Settings) -> TelemetrySink:
     if settings.telemetry_sink == "null":
         return NullTelemetrySink()
-    return JsonlTelemetrySink(_telemetry_path(settings))
-
-
-def _telemetry_path(settings: Settings) -> Path:
-    if settings.telemetry_path is not None:
-        return settings.telemetry_path
-    return settings.data_dir / TELEMETRY_FILENAME
+    # `Settings.from_env` always resolves the path; a Settings built by hand may not, so the
+    # documented default is asked for by name rather than spelled out a second time.
+    path = settings.telemetry_path or default_telemetry_path(settings.data_dir)
+    return JsonlTelemetrySink(path)

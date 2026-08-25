@@ -72,6 +72,10 @@ A `TOURGANIZE_*` key ending in `_KEY`, `_API_KEY`, `_TOKEN`, `_SECRET`, `_PASSWO
 `_CREDENTIALS` is treated as a secret: it is wrapped in `SecretValue`, which redacts in
 `repr`, `str` and `format`, so it cannot reach a log line or `doctor` output by accident.
 
+A secrets file may only set `TOURGANIZE_*` keys. A key without the prefix is refused with a
+`ConfigurationError` naming it, rather than ignored — a secret believed to be loaded is worse
+than one that is plainly missing.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

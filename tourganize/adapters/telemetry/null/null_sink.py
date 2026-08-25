@@ -19,3 +19,8 @@ class NullTelemetrySink:
 
     def record(self, event: TelemetryEvent) -> None:
         return None
+
+    @property
+    def degraded(self) -> bool:
+        """A sink that writes nowhere has nothing that can fail."""
+        return False

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from tourganize.platform.errors import ConfigurationError, TourganizeError
-from tourganize.platform.settings import Settings, _integer
+from tourganize.platform.settings import Settings
 
 
 @pytest.mark.parametrize(
@@ -49,23 +49,47 @@ def test_a_file_key_pointing_at_a_directory_is_rejected(tmp_path: Path, key: str
     assert key in str(raised.value)
 
 
-def test_a_malformed_integer_is_rejected() -> None:
-    # No integer key exists yet; later features route theirs through this one parser.
-    with pytest.raises(ConfigurationError) as raised:
-        _integer({"TOURGANIZE_SLATE_SIZE": "three"}, "TOURGANIZE_SLATE_SIZE", 3)
-    assert "TOURGANIZE_SLATE_SIZE" in str(raised.value)
-
-    with pytest.raises(ConfigurationError):
-        _integer({"TOURGANIZE_SLATE_SIZE": "-1"}, "TOURGANIZE_SLATE_SIZE", 3, minimum=1)
-
-    assert _integer({}, "TOURGANIZE_SLATE_SIZE", 3) == 3
-    assert _integer({"TOURGANIZE_SLATE_SIZE": "5"}, "TOURGANIZE_SLATE_SIZE", 3) == 5
-
-
 def test_an_unreadable_secrets_file_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError) as raised:
         Settings.from_env({"TOURGANIZE_SECRETS_FILE": str(tmp_path / "absent.env")})
     assert "TOURGANIZE_SECRETS_FILE" in str(raised.value)
+
+
+def test_a_secrets_file_key_without_the_prefix_is_refused(tmp_path: Path) -> None:
+    """Silently ignoring it is worse: the caller believes the secret was loaded."""
+    secrets_file = tmp_path / "secrets.env"
+    secrets_file.write_text("ANTHROPIC_API_KEY=sk-not-ours\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError) as raised:
+        Settings.from_env({"TOURGANIZE_SECRETS_FILE": str(secrets_file)})
+
+    message = str(raised.value)
+    assert "ANTHROPIC_API_KEY" in message
+    assert "TOURGANIZE_" in message
+    assert "sk-not-ours" not in message
+
+
+def test_a_secrets_file_carries_prefixed_keys_into_settings(tmp_path: Path) -> None:
+    secrets_file = tmp_path / "secrets.env"
+    secrets_file.write_text("TOURGANIZE_PROVIDER_API_KEY=from-the-file\n", encoding="utf-8")
+
+    settings = Settings.from_env({"TOURGANIZE_SECRETS_FILE": str(secrets_file)})
+
+    assert settings.secrets["TOURGANIZE_PROVIDER_API_KEY"].reveal() == "from-the-file"
+
+
+def test_the_environment_wins_over_the_secrets_file(tmp_path: Path) -> None:
+    secrets_file = tmp_path / "secrets.env"
+    secrets_file.write_text("TOURGANIZE_PROVIDER_API_KEY=from-the-file\n", encoding="utf-8")
+
+    settings = Settings.from_env(
+        {
+            "TOURGANIZE_SECRETS_FILE": str(secrets_file),
+            "TOURGANIZE_PROVIDER_API_KEY": "from-the-environment",
+        }
+    )
+
+    assert settings.secrets["TOURGANIZE_PROVIDER_API_KEY"].reveal() == "from-the-environment"
 
 
 def test_a_malformed_secrets_file_line_names_the_line(tmp_path: Path) -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import io
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -17,9 +17,6 @@ from tourganize.cli import (
     PLANNED_COMMANDS,
     main,
 )
-from tourganize.platform.settings import Settings
-
-SettingsFactory = Callable[..., Settings]
 
 
 def _run(argv: list[str], environ: Mapping[str, str] | None = None) -> tuple[int, str, str]:
@@ -91,13 +88,6 @@ def test_doctor_never_prints_a_secret(tmp_path: Path) -> None:
     assert "TOURGANIZE_PROVIDER_API_KEY=***" in out
 
 
-def test_doctor_quiet_prints_only_the_verdict(tmp_path: Path) -> None:
-    code, out, _ = _run(["doctor", "--quiet"], _environ(tmp_path))
-
-    assert code == EXIT_OK
-    assert out.strip() == "doctor: ok"
-
-
 def test_doctor_fails_when_a_port_is_unhealthy(tmp_path: Path) -> None:
     blocker = tmp_path / "blocker"
     blocker.write_text("", encoding="utf-8")
@@ -116,6 +106,15 @@ def test_an_invalid_setting_exits_3_before_anything_is_built(tmp_path: Path) -> 
 
     assert code == EXIT_CONFIGURATION_ERROR
     assert "configuration error" in err
+    assert "TOURGANIZE_LOG_FORMAT" in err
+    assert out == ""
+
+
+def test_a_stub_command_reports_a_broken_configuration_rather_than_its_own_stubbing() -> None:
+    """Settings are resolved before dispatch: "fail fast, never half-configured"."""
+    code, out, err = _run(["chat"], {"TOURGANIZE_LOG_FORMAT": "xml"})
+
+    assert code == EXIT_CONFIGURATION_ERROR
     assert "TOURGANIZE_LOG_FORMAT" in err
     assert out == ""
 

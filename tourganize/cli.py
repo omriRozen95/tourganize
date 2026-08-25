@@ -57,13 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
     subcommands = parser.add_subparsers(dest="command", metavar="command")
 
-    doctor = subcommands.add_parser(
+    subcommands.add_parser(
         "doctor", help="print resolved settings, selected adapters and per-port health"
-    )
-    doctor.add_argument(
-        "--quiet",
-        action="store_true",
-        help="print only the final verdict line",
     )
 
     for name, (feature, summary) in PLANNED_COMMANDS.items():
@@ -93,6 +88,15 @@ def main(
         parser.print_help(out)
         return EXIT_OK
 
+    # Before dispatch, so that an invalid setting is exit 3 whichever sub-command was asked
+    # for. A stub that answered "not implemented" while the configuration was broken would
+    # report the less useful of the two problems.
+    try:
+        settings = Settings.from_env(env)
+    except ConfigurationError as exc:
+        print(f"configuration error: {exc}", file=err)
+        return EXIT_CONFIGURATION_ERROR
+
     if command in PLANNED_COMMANDS:
         feature, summary = PLANNED_COMMANDS[command]
         print(
@@ -101,35 +105,20 @@ def main(
         )
         return EXIT_NOT_IMPLEMENTED
 
-    try:
-        settings = Settings.from_env(env)
-    except ConfigurationError as exc:
-        print(f"configuration error: {exc}", file=err)
-        return EXIT_CONFIGURATION_ERROR
-
     logger = configure_logging(settings, stream=err)
     logger.debug("settings resolved", extra={"kind": "startup", "profile": settings.env})
 
     if command == "doctor":
-        return _doctor(settings, env, quiet=bool(args.quiet), out=out)
+        return _doctor(settings, env, out=out)
 
     parser.print_help(err)  # pragma: no cover - argparse rejects unknown commands first
     return EXIT_NOT_IMPLEMENTED  # pragma: no cover
 
 
-def _doctor(
-    settings: Settings,
-    env: Mapping[str, str],
-    *,
-    quiet: bool,
-    out: TextIO,
-) -> int:
+def _doctor(settings: Settings, env: Mapping[str, str], *, out: TextIO) -> int:
     container = build_container(settings)
     report = run_diagnostics(container, version=__version__, unrecognised=unrecognised_keys(env))
-    if quiet:
-        print("doctor: ok" if report.ok else "doctor: FAILED", file=out)
-    else:
-        print(report.render(), file=out)
+    print(report.render(), file=out)
     return EXIT_OK if report.ok else EXIT_DOCTOR_FAILED
 
 

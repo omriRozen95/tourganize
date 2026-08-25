@@ -6,9 +6,11 @@ import sys
 
 from boundaries import (
     PURE_PACKAGES,
+    ImportEdge,
     find_violations,
     imports_of,
     iter_modules,
+    judge,
     planted_violation,
 )
 
@@ -36,8 +38,25 @@ def test_the_checker_catches_a_planted_violation() -> None:
     assert not probe.exists()
     assert any("_boundary_probe" in violation for violation in violations)
     assert any("must import only the standard library" in violation for violation in violations)
-    assert any("only the Composition Root and the CLI" in violation for violation in violations)
+    assert any("only the Composition Root" in violation for violation in violations)
     assert find_violations() == ()
+
+
+def test_the_cli_may_not_import_an_adapter() -> None:
+    """The CLI holds no exemption: it receives adapters from the Container like everything else.
+
+    CLAUDE.md — "Adapters are selected from Settings in exactly one place:
+    tourganize/application/composition.py."
+    """
+    edge = ImportEdge("tourganize.cli", "tourganize.adapters.telemetry.null", 1)
+
+    assert judge(edge) == [f"only the Composition Root may import adapters: {edge}"]
+
+
+def test_the_composition_root_may() -> None:
+    edge = ImportEdge("tourganize.application.composition", "tourganize.adapters.clock.system", 1)
+
+    assert judge(edge) == []
 
 
 def test_every_module_is_reachable_by_name() -> None:

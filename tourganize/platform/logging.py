@@ -66,6 +66,9 @@ _RESERVED: Final = frozenset(
     }
 )
 
+#: Always present on a record, so a consumer can select on them without a null check.
+_CORRELATION_FIELDS: Final = ("session_id", "turn_index")
+
 _CONTEXT: ContextVar[Mapping[str, object]] = ContextVar("tourganize_log_context")
 
 
@@ -97,10 +100,9 @@ class ContextFilter(logging.Filter):
         for key, value in context.items():
             if key not in _RESERVED:
                 setattr(record, key, value)
-        if not hasattr(record, "session_id"):
-            record.session_id = None
-        if not hasattr(record, "turn_index"):
-            record.turn_index = None
+        for correlation_field in _CORRELATION_FIELDS:
+            if not hasattr(record, correlation_field):
+                setattr(record, correlation_field, None)
         return True
 
 
@@ -108,7 +110,7 @@ def _extras(record: logging.LogRecord) -> dict[str, object]:
     return {
         key: value
         for key, value in vars(record).items()
-        if key not in _RESERVED and key not in {"session_id", "turn_index"}
+        if key not in _RESERVED and key not in _CORRELATION_FIELDS
     }
 
 

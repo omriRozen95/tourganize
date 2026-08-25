@@ -37,9 +37,10 @@ def test_telemetry_path_follows_the_data_dir() -> None:
     assert settings.telemetry_path == Path("/srv/state/telemetry.jsonl")
 
 
-def test_telemetry_path_is_unset_when_nothing_writes_it() -> None:
+def test_the_telemetry_path_default_does_not_depend_on_the_selected_sink() -> None:
+    """The documented default is unconditional; the null sink simply never writes there."""
     settings = Settings.from_env({"TOURGANIZE_TELEMETRY_SINK": "null"})
-    assert settings.telemetry_path is None
+    assert settings.telemetry_path == Path("var/telemetry.jsonl")
 
 
 def test_blank_values_fall_back_to_the_default() -> None:

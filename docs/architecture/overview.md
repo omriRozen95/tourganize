@@ -195,8 +195,10 @@ tests/                    # ✔ see tests/README.md for the conventions
 ```
 
 **✔ marks what exists today** (after F01); an unmarked directory is created by the feature
-named beside it, which also fills a marked-but-empty package. A sub-package is never created
-before the feature that puts something in it — the empty tree is documentation, not code.
+named beside it, which also fills a marked-but-empty package. F01 created the adapter
+sub-packages up to F07 and no further, so the near shape is visible without inventing folders
+for features nobody has started — an empty package is documentation, not code, and beyond F07
+even the documentation waits.
 
 ---
 

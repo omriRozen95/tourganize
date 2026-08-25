@@ -93,11 +93,20 @@ exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]
 # --------------------------------------------------------------------------------------
 [tool.importlinter]
 root_package = "tourganize"
+# Required so that a third-party import inside the domain is a visible edge in the graph
+# rather than an invisible one. Without it, contract 1 below can only see internal modules.
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "Domain and dialogue import only the standard library and each other"
 type = "forbidden"
 source_modules = ["tourganize.domain", "tourganize.dialogue"]
+# Both halves matter. The internal half keeps the domain off the platform; the external half
+# keeps a third-party library out of it. Every distribution named in
+# [project.optional-dependencies] belongs in the list below — adding an extra without adding
+# its import name here silently narrows this contract.
+# tests/architecture/test_import_boundaries.py checks the same rule exhaustively, by AST, so
+# a library nobody thought to list is still caught.
 forbidden_modules = [
   "tourganize.adapters",
   "tourganize.application",
@@ -105,6 +114,13 @@ forbidden_modules = [
   "tourganize.language",
   "tourganize.platform",
   "tourganize.ports",
+  "fastmcp",
+  "httpx",
+  "numpy",
+  "pypdf",
+  "sentence_transformers",
+  "textual",
+  "weasyprint",
 ]
 
 [[tool.importlinter.contracts]]
@@ -123,11 +139,15 @@ modules = [
   "tourganize.adapters.telemetry",
 ]
 
+# CLAUDE.md: "Adapters are selected from Settings in exactly one place:
+# tourganize/application/composition.py." tourganize.cli is a source module here, not an
+# exemption: it reaches adapters through build_container like everything else.
 [[tool.importlinter.contracts]]
-name = "Only the Composition Root and the CLI import adapters"
+name = "Only the Composition Root imports adapters"
 type = "forbidden"
 source_modules = [
   "tourganize.application",
+  "tourganize.cli",
   "tourganize.dialogue",
   "tourganize.domain",
   "tourganize.language",

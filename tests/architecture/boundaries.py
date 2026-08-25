@@ -23,7 +23,7 @@ ROOT_PACKAGE: Final = "tourganize"
 
 PURE_PACKAGES: Final = ("tourganize.domain", "tourganize.dialogue")
 ADAPTERS_PACKAGE: Final = "tourganize.adapters"
-ADAPTER_IMPORTERS: Final = ("tourganize.application.composition", "tourganize.cli")
+ADAPTER_IMPORTERS: Final = ("tourganize.application.composition",)
 PORTS_PACKAGE: Final = "tourganize.ports"
 
 PROBE_MODULE: Final = "_boundary_probe"
@@ -104,11 +104,12 @@ def find_violations() -> tuple[str, ...]:
     violations: list[str] = []
     for name, path in iter_modules():
         for edge in imports_of(name, path):
-            violations += _judge(edge)
+            violations += judge(edge)
     return tuple(violations)
 
 
-def _judge(edge: ImportEdge) -> list[str]:
+def judge(edge: ImportEdge) -> list[str]:
+    """Return every contract ``edge`` breaks, as human-readable lines."""
     found: list[str] = []
     imported = edge.imported
 
@@ -130,7 +131,7 @@ def _judge(edge: ImportEdge) -> list[str]:
     if imported.startswith(ADAPTERS_PACKAGE) and not edge.importer.startswith(
         (*ADAPTER_IMPORTERS, ADAPTERS_PACKAGE)
     ):
-        found.append(f"only the Composition Root and the CLI may import adapters: {edge}")
+        found.append(f"only the Composition Root may import adapters: {edge}")
 
     return found
 

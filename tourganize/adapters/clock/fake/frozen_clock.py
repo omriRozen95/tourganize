@@ -43,5 +43,5 @@ class FrozenClock:
 
 def _require_aware(moment: datetime) -> datetime:
     if moment.tzinfo is None or moment.tzinfo.utcoffset(moment) is None:
-        raise ContractViolationError("Clock.now must return a timezone-aware datetime")
+        raise ContractViolationError(f"a Clock moment must be timezone-aware, got {moment!r}")
     return moment

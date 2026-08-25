@@ -48,9 +48,20 @@ class TelemetrySink(Protocol):
     """Receives Turn Ledger entries and other structured events.
 
     A sink never raises: telemetry must not be able to end a planning session. An adapter
-    that cannot write degrades to a no-op after warning once.
+    that cannot write degrades to a no-op after warning once, and says so through
+    :attr:`degraded` — otherwise the failure is invisible and ``doctor`` would have to guess
+    at an adapter's internals to find it.
     """
 
     def record(self, event: TelemetryEvent) -> None:
         """Record one event. Must not raise."""
+        ...
+
+    @property
+    def degraded(self) -> bool:
+        """True once this sink has stopped recording after a failure.
+
+        Always ``False`` for a sink that cannot fail. This is the port's health signal:
+        ``doctor`` reads it, so every adapter must answer it.
+        """
         ...

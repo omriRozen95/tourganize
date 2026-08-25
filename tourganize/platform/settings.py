@@ -18,6 +18,12 @@ way of loading configuration.
 | ``TOURGANIZE_SECRETS_FILE`` | Optional ``KEY=value`` file merged *under* the environment | unset |
 | ``TOURGANIZE_TELEMETRY_SINK`` | ``null`` or ``jsonl`` | ``jsonl`` |
 | ``TOURGANIZE_TELEMETRY_PATH`` | Where the JSONL sink writes | ``$DATA_DIR/telemetry.jsonl`` |
+
+Two keys are worth a word on. ``TOURGANIZE_TELEMETRY_PATH`` defaults to its documented value
+whichever sink is selected — the ``null`` sink simply never writes there — so nothing
+downstream has to re-derive it. And a secrets file may only set ``TOURGANIZE_*`` keys: a
+stray key is refused rather than ignored, because a secret believed to be loaded is worse
+than one that is missing.
 """
 
 from __future__ import annotations
@@ -39,6 +45,7 @@ __all__ = [
     "LogFormat",
     "Settings",
     "TelemetrySinkName",
+    "default_telemetry_path",
     "unrecognised_keys",
 ]
 
@@ -68,10 +75,10 @@ SECRET_KEY_SUFFIXES: Final = (
     "_CREDENTIALS",
 )
 
-#: Every non-secret key this version understands. ``doctor`` reports ``TOURGANIZE_*`` keys
-#: that are in neither this set nor the secret convention, which catches typos.
 _ChoiceT = TypeVar("_ChoiceT", bound=str)
 
+#: Every non-secret key this version understands. ``doctor`` reports ``TOURGANIZE_*`` keys
+#: that are in neither this set nor the secret convention, which catches typos.
 KNOWN_KEYS: Final = frozenset(
     {
         "TOURGANIZE_ENV",
@@ -104,14 +111,13 @@ class Settings:
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> Settings:
         """Build settings from ``environ``, merging any secrets file underneath it."""
-        secrets_file = _optional_path(environ, "TOURGANIZE_SECRETS_FILE")
+        secrets_file = _file(environ, "TOURGANIZE_SECRETS_FILE", None)
         merged = _merge(_read_secrets_file(secrets_file), environ)
 
         env = _choice(merged, "TOURGANIZE_ENV", _ENV_VALUES, "dev")
         log_format_default: LogFormat = "human" if env == "dev" else "json"
         sink = _choice(merged, "TOURGANIZE_TELEMETRY_SINK", _TELEMETRY_SINKS, "jsonl")
         data_dir = _directory(merged, "TOURGANIZE_DATA_DIR", DEFAULT_DATA_DIR)
-        telemetry_default = data_dir / TELEMETRY_FILENAME if sink == "jsonl" else None
 
         return cls(
             env=env,
@@ -120,7 +126,9 @@ class Settings:
             config_dir=_directory(merged, "TOURGANIZE_CONFIG_DIR", DEFAULT_CONFIG_DIR),
             data_dir=data_dir,
             telemetry_sink=sink,
-            telemetry_path=_file(merged, "TOURGANIZE_TELEMETRY_PATH", telemetry_default),
+            telemetry_path=_file(
+                merged, "TOURGANIZE_TELEMETRY_PATH", default_telemetry_path(data_dir)
+            ),
             secrets_file=secrets_file,
             secrets=_collect_secrets(merged),
         )
@@ -143,6 +151,15 @@ class Settings:
             "secrets": _describe_secrets(self.secrets),
         }
         return MappingProxyType(described)
+
+
+def default_telemetry_path(data_dir: Path) -> Path:
+    """Where the JSONL sink writes unless ``TOURGANIZE_TELEMETRY_PATH`` says otherwise.
+
+    The Composition Root needs this too, so it lives here rather than being spelled out
+    twice: the documented default has one definition.
+    """
+    return data_dir / TELEMETRY_FILENAME
 
 
 def unrecognised_keys(environ: Mapping[str, str]) -> tuple[str, ...]:
@@ -199,7 +216,14 @@ def _read_secrets_file(path: Path | None) -> Mapping[str, str]:
                 f"TOURGANIZE_SECRETS_FILE={path} line {number} is not KEY=value: {raw!r}"
             )
         key, _, value = line.partition("=")
-        values[key.strip()] = value.strip().strip("'\"")
+        name = key.strip()
+        if not name.startswith(PREFIX):
+            raise ConfigurationError(
+                f"TOURGANIZE_SECRETS_FILE={path} line {number} sets {name!r}, which is not a "
+                f"{PREFIX}* key. Every setting this application reads is {PREFIX}*, so a key "
+                f"without that prefix would be loaded and never used."
+            )
+        values[name] = value.strip().strip("'\"")
     return values
 
 
@@ -238,32 +262,11 @@ def _log_level(environ: Mapping[str, str], key: str, default: str) -> str:
     return name
 
 
-def _integer(environ: Mapping[str, str], key: str, default: int, *, minimum: int = 0) -> int:
-    """Parse an integer setting. Unused in F01; the shared parser later keys must use."""
-    value = _raw(environ, key)
-    if value is None:
-        return default
-    try:
-        number = int(value)
-    except ValueError as exc:
-        raise ConfigurationError(f"{key}={value!r} is not an integer") from exc
-    if number < minimum:
-        raise ConfigurationError(f"{key}={number} is below the minimum of {minimum}")
-    return number
-
-
 def _path(environ: Mapping[str, str], key: str) -> Path | None:
     value = _raw(environ, key)
     if value is None:
         return None
     return Path(value).expanduser()
-
-
-def _optional_path(environ: Mapping[str, str], key: str) -> Path | None:
-    path = _path(environ, key)
-    if path is not None and path.exists() and not path.is_file():
-        raise ConfigurationError(f"{key}={path} exists but is not a file")
-    return path
 
 
 def _directory(environ: Mapping[str, str], key: str, default: Path) -> Path:

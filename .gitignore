@@ -207,6 +207,10 @@ tempCodeRunnerFile.py
 .ruff_cache/
 .import_linter_cache/
 
+# The deliberate boundary violation planted by tests/architecture/, in case a run is
+# interrupted before it removes it again.
+tourganize/domain/_boundary_probe.py
+
 # PyPI configuration file
 .pypirc
 

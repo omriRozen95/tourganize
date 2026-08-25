@@ -7,6 +7,7 @@ Telemetry must not be able to end a planning session.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Iterator
 from datetime import timedelta
 from pathlib import Path
@@ -20,11 +21,11 @@ from tourganize.ports.platform import TelemetryEvent, TelemetrySink
 
 SinkBuilder = Callable[[Path], TelemetrySink]
 
-SINKS: list[tuple[str, SinkBuilder]] = [
-    ("NullTelemetrySink", lambda _path: NullTelemetrySink()),
-    ("JsonlTelemetrySink", lambda path: JsonlTelemetrySink(path / "telemetry.jsonl")),
-]
-SINK_IDS = [name for name, _ in SINKS]
+#: Every adapter of the port, keyed by the name the test ids use.
+SINKS: dict[str, SinkBuilder] = {
+    "NullTelemetrySink": lambda _path: NullTelemetrySink(),
+    "JsonlTelemetrySink": lambda path: JsonlTelemetrySink(path / "telemetry.jsonl"),
+}
 
 
 def _events() -> Iterator[TelemetryEvent]:
@@ -44,25 +45,33 @@ def _events() -> Iterator[TelemetryEvent]:
     )
 
 
-@pytest.mark.parametrize(("name", "build"), SINKS, ids=SINK_IDS)
-def test_a_sink_accepts_every_event_and_never_raises(
-    name: str, build: SinkBuilder, tmp_path: Path
-) -> None:
+@pytest.mark.parametrize("build", SINKS.values(), ids=SINKS)
+def test_a_sink_accepts_every_event_and_never_raises(build: SinkBuilder, tmp_path: Path) -> None:
     sink = build(tmp_path)
 
     for event in _events():
         sink.record(event)
 
 
-@pytest.mark.parametrize(("name", "build"), SINKS, ids=SINK_IDS)
-def test_the_port_is_satisfied_structurally(name: str, build: SinkBuilder, tmp_path: Path) -> None:
+@pytest.mark.parametrize("build", SINKS.values(), ids=SINKS)
+def test_the_port_is_satisfied_structurally(build: SinkBuilder, tmp_path: Path) -> None:
     assert isinstance(build(tmp_path), TelemetrySink)
 
 
-@pytest.mark.parametrize(("name", "build"), SINKS, ids=SINK_IDS)
-def test_a_sink_survives_a_destination_it_cannot_write(
-    name: str, build: SinkBuilder, tmp_path: Path
-) -> None:
+@pytest.mark.parametrize("build", SINKS.values(), ids=SINKS)
+def test_a_sink_reports_its_health(build: SinkBuilder, tmp_path: Path) -> None:
+    """``doctor`` reads ``degraded``, so every adapter must answer it — healthy to begin."""
+    sink = build(tmp_path)
+
+    assert sink.degraded is False
+
+    sink.record(next(_events()))
+
+    assert sink.degraded is False
+
+
+@pytest.mark.parametrize("build", SINKS.values(), ids=SINKS)
+def test_a_sink_survives_a_destination_it_cannot_write(build: SinkBuilder, tmp_path: Path) -> None:
     blocker = tmp_path / "blocker"
     blocker.write_text("", encoding="utf-8")
     sink = build(blocker / "nested")
@@ -102,8 +111,6 @@ def test_the_jsonl_sink_appends_rather_than_truncating(tmp_path: Path) -> None:
 
 
 def test_a_write_failure_degrades_to_a_warning_once(tmp_path: Path) -> None:
-    import logging
-
     blocker = tmp_path / "blocker"
     blocker.write_text("", encoding="utf-8")
     logger = logging.getLogger("test.telemetry.degrade")
