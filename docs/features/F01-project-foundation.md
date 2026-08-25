@@ -64,7 +64,9 @@ layout to create is fixed in [overview.md §3](../architecture/overview.md).
     - `tourganize.domain` and `tourganize.dialogue` may import only stdlib and each other;
     - `tourganize.ports` may not import `tourganize.adapters`;
     - `tourganize.adapters.*` sub-packages may not import each other;
-    - only `tourganize.application.composition` and `tourganize.cli` may import `tourganize.adapters`.
+    - only `tourganize.application.composition` may import `tourganize.adapters` — the CLI holds no
+      exemption, because it receives its adapters from the `Container` like every other caller
+      (CLAUDE.md: "Adapters are selected from `Settings` in exactly one place").
 11. **Containers** — `docker/app.Dockerfile` (slim Python base, non-root user, base + `terminal` extras)
     and `docker/compose.yaml` with a **`dev-cpu` profile** mounting the repo and a named volume for
     `TOURGANIZE_DATA_DIR`. No GPU, no CUDA, nothing that requires the NVIDIA runtime.
@@ -75,8 +77,10 @@ layout to create is fixed in [overview.md §3](../architecture/overview.md).
 
 **Inputs:** process environment (and optionally a secrets file); CLI argv.
 
-**Outputs:** an installed package, a `Container` of empty port slots, configured logging, and CLI exit
-codes (`0` success, `2` unimplemented sub-command, `3` `ConfigurationError`).
+**Outputs:** an installed package, a `Container` of port slots, configured logging, and CLI exit
+codes (`0` success, `1` `doctor` found a failing check, `2` unimplemented sub-command,
+`3` `ConfigurationError`). Settings are resolved *before* the sub-command dispatches, so a broken
+configuration is `3` whichever command was asked for.
 
 ```python
 @dataclass(frozen=True)

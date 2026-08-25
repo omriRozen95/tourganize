@@ -1,0 +1,4 @@
+# The compose file lives in docker/ with the Dockerfiles it builds; this include exists so
+# that `docker compose --profile dev-cpu ...` works from the repository root.
+include:
+  - path: docker/compose.yaml
