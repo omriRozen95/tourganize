@@ -5,10 +5,11 @@ YAML file reader and an in-memory fake; a database, a remote configuration servi
 generated catalog would all satisfy the same four methods, and nothing above the port would
 notice.
 
-``schema_for`` is declared here but not yet implemented by any adapter: F03 introduces the
-Requirement Schema it returns and narrows the return type from ``object``. It is declared now
-so that the port's shape is the one later features were promised, rather than something that
-grows a method the moment it is needed.
+``schema_for`` is declared here but not yet implemented by any adapter. That is deliberate and
+it is a hand-off, not an oversight: F03's Starting state is written as "the ``ComponentCatalog``
+port with ``schema_for()`` declared but unimplemented", so the port's shape is the one F03 was
+promised rather than one that grows a method the moment it is needed. F03 introduces the
+Requirement Schema it returns and narrows the return type from ``object``.
 """
 
 from __future__ import annotations

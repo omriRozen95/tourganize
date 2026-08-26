@@ -10,8 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import final
 
-from tourganize.domain.catalog import ComponentKind, catalog_problems
-from tourganize.domain.errors import UnknownComponentKindError
+from tourganize.domain.catalog import ComponentKind, catalog_problems, find_kind, only_enabled
 from tourganize.platform.errors import CatalogError
 
 __all__ = ["InMemoryComponentCatalog"]
@@ -38,25 +37,14 @@ class InMemoryComponentCatalog:
         return self._kinds
 
     def enabled_kinds(self) -> tuple[ComponentKind, ...]:
-        return tuple(kind for kind in self._kinds if kind.enabled)
+        return only_enabled(self._kinds)
 
     def kind(self, kind_key: str) -> ComponentKind:
-        for kind in self.enabled_kinds():
-            if kind.kind_key == kind_key:
-                return kind
-        raise UnknownComponentKindError(_unknown_message(kind_key, self._kinds, self._origin))
+        return find_kind(self._kinds, kind_key, self._origin)
 
     def schema_for(self, kind_key: str) -> object:
-        """Declared by the port, implemented by F03."""
+        """Declared by the port, implemented by F03 — see the port's module docstring."""
         raise NotImplementedError(
             "Requirement Schemas arrive with F03; ComponentKind.schema_key names the schema "
             f"{kind_key!r} will resolve to."
         )
-
-
-def _unknown_message(kind_key: str, kinds: tuple[ComponentKind, ...], origin: str) -> str:
-    disabled = {kind.kind_key for kind in kinds if not kind.enabled}
-    if kind_key in disabled:
-        return f"Component Kind {kind_key!r} is declared in {origin} but disabled"
-    declared = ", ".join(kind.kind_key for kind in kinds if kind.enabled) or "none"
-    return f"unknown Component Kind {kind_key!r}; {origin} declares {declared}"

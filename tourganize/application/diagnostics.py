@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Final
 
 from tourganize.application.composition import PENDING_PORTS, Container
+from tourganize.domain.invariants import is_aware
 from tourganize.platform.errors import ConfigurationError
 from tourganize.ports.platform import TelemetryEvent
 
@@ -116,7 +117,7 @@ def _check_data_dir(data_dir: Path) -> CheckResult:
 
 def _check_clock(container: Container) -> CheckResult:
     moment = container.clock.now()
-    if moment.tzinfo is None or moment.tzinfo.utcoffset(moment) is None:
+    if not is_aware(moment):
         return CheckResult("clock", False, "now() returned a naive datetime")
     return CheckResult("clock", True, f"now() = {moment.isoformat()}")
 

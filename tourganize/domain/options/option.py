@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from tourganize.domain.errors import InvariantViolationError
+from tourganize.domain.invariants import require_text
 from tourganize.domain.options.money import Money
 from tourganize.domain.options.provenance import Provenance
 
@@ -34,8 +35,8 @@ class PlanOption:
     provenance: Provenance
 
     def __post_init__(self) -> None:
-        _require_text(self.option_id, "PlanOption.option_id")
-        _require_text(self.kind_key, "PlanOption.kind_key")
+        require_text(self.option_id, "PlanOption.option_id")
+        require_text(self.kind_key, "PlanOption.kind_key")
         if self.price is not None and type(self.price) is not Money:
             raise InvariantViolationError(
                 f"PlanOption.price must be Money or None, got {self.price!r}"
@@ -48,10 +49,6 @@ class PlanOption:
         # A read-only view, so a slate handed to the dialogue cannot be edited underneath it.
         object.__setattr__(self, "facts", MappingProxyType(dict(self.facts)))
 
-    def fact(self, name: str) -> object | None:
-        """Return one declared fact, or ``None`` when this option does not carry it."""
-        return self.facts.get(name)
-
 
 @dataclass(frozen=True, slots=True)
 class OptionSlate:
@@ -63,7 +60,7 @@ class OptionSlate:
     requirements_digest: str = ""
 
     def __post_init__(self) -> None:
-        _require_text(self.kind_key, "OptionSlate.kind_key")
+        require_text(self.kind_key, "OptionSlate.kind_key")
         if type(self.round_index) is not int:
             raise InvariantViolationError(
                 f"OptionSlate.round_index must be an integer, got {self.round_index!r}"
@@ -96,8 +93,3 @@ class OptionSlate:
 
     def __len__(self) -> int:
         return len(self.options)
-
-
-def _require_text(value: str, field_name: str) -> None:
-    if type(value) is not str or not value.strip():
-        raise InvariantViolationError(f"{field_name} must be a non-empty string, got {value!r}")

@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from tourganize.domain.errors import InvariantViolationError
+from tourganize.domain.invariants import require_aware, require_text
 
 __all__ = ["Provenance"]
 
@@ -26,12 +26,5 @@ class Provenance:
     citations: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if type(self.source_id) is not str or not self.source_id.strip():
-            raise InvariantViolationError(
-                f"Provenance.source_id must name the source, got {self.source_id!r}"
-            )
-        moment = self.retrieved_at
-        if moment.tzinfo is None or moment.tzinfo.utcoffset(moment) is None:
-            raise InvariantViolationError(
-                f"Provenance.retrieved_at must be timezone-aware, got {moment!r}"
-            )
+        require_text(self.source_id, "Provenance.source_id")
+        require_aware(self.retrieved_at, "Provenance.retrieved_at")

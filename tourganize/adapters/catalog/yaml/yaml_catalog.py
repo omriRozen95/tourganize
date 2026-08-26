@@ -21,8 +21,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Final, final
 
-from tourganize.domain.catalog import ComponentKind, catalog_problems
-from tourganize.domain.errors import InvariantViolationError, UnknownComponentKindError
+from tourganize.domain.catalog import ComponentKind, catalog_problems, find_kind, only_enabled
+from tourganize.domain.errors import InvariantViolationError
 from tourganize.platform.errors import CatalogError, ConfigurationError
 from tourganize.platform.yaml_subset import read_config_file
 
@@ -72,24 +72,13 @@ class YamlComponentCatalog:
         return cached
 
     def enabled_kinds(self) -> tuple[ComponentKind, ...]:
-        return tuple(kind for kind in self.kinds() if kind.enabled)
+        return only_enabled(self.kinds())
 
     def kind(self, kind_key: str) -> ComponentKind:
-        for kind in self.enabled_kinds():
-            if kind.kind_key == kind_key:
-                return kind
-        disabled = {kind.kind_key for kind in self.kinds() if not kind.enabled}
-        if kind_key in disabled:
-            raise UnknownComponentKindError(
-                f"Component Kind {kind_key!r} is declared in {self.origin} but disabled"
-            )
-        declared = ", ".join(kind.kind_key for kind in self.enabled_kinds()) or "none"
-        raise UnknownComponentKindError(
-            f"unknown Component Kind {kind_key!r}; {self.origin} declares {declared}"
-        )
+        return find_kind(self.kinds(), kind_key, self.origin)
 
     def schema_for(self, kind_key: str) -> object:
-        """Declared by the port, implemented by F03."""
+        """Declared by the port, implemented by F03 — see the port's module docstring."""
         raise NotImplementedError(
             "Requirement Schemas arrive with F03; ComponentKind.schema_key names the schema "
             f"{kind_key!r} will resolve to."

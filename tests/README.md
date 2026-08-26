@@ -1,6 +1,6 @@
 # Tests
 
-Four directories, one purpose each:
+Five directories, one purpose each:
 
 | Directory | What lives here | Introduced by |
 |---|---|---|

@@ -36,11 +36,3 @@ class PlanCompleteness:
     def is_empty(self) -> bool:
         """True for a plan with no components at all — nothing has been discussed yet."""
         return not (self.selected or self.declined or self.open)
-
-    def explain(self) -> tuple[tuple[str, str], ...]:
-        """Return ``(kind_key, state)`` pairs, for telemetry and the evaluation harness."""
-        return (
-            *((kind, "selected") for kind in self.selected),
-            *((kind, "declined") for kind in self.declined),
-            *((kind, "open") for kind in self.open),
-        )

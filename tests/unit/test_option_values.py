@@ -49,8 +49,36 @@ def test_money_allows_zero_and_negative_amounts() -> None:
 
 def test_money_of_the_same_currency_compares_and_of_different_currencies_says_so() -> None:
     assert Money(100, "EUR") < Money(200, "EUR")
+    assert Money(200, "EUR") >= Money(200, "EUR")
+    assert sorted([Money(300, "EUR"), Money(100, "EUR")]) == [Money(100, "EUR"), Money(300, "EUR")]
     assert Money(100, "EUR").same_currency_as(Money(900, "EUR"))
     assert not Money(100, "EUR").same_currency_as(Money(100, "ILS"))
+
+
+@pytest.mark.parametrize(
+    "compare",
+    [
+        lambda left, right: left < right,
+        lambda left, right: left <= right,
+        lambda left, right: left > right,
+        lambda left, right: left >= right,
+    ],
+    ids=["lt", "le", "gt", "ge"],
+)
+def test_money_refuses_to_order_two_currencies(
+    compare: Callable[[Money, Money], bool],
+) -> None:
+    """A generated ordering would answer `100 EUR < 200 ILS` with a confident, wrong True."""
+    with pytest.raises(InvariantViolationError) as raised:
+        compare(Money(100, "EUR"), Money(200, "ILS"))
+
+    assert "exchange rate" in str(raised.value)
+
+
+def test_sorting_a_mixed_currency_slate_by_price_is_refused_not_silently_wrong() -> None:
+    """The cheapest-first ranking F06 and F13 want must never span currencies."""
+    with pytest.raises(InvariantViolationError):
+        sorted([Money(100, "EUR"), Money(200, "ILS")])
 
 
 def test_provenance_requires_a_source_and_an_aware_timestamp() -> None:
@@ -84,8 +112,8 @@ def test_a_plan_option_needs_provenance_because_an_untraceable_option_cannot_be_
 def test_option_facts_are_a_read_only_view(option_factory: OptionFactory) -> None:
     option = option_factory("a1", nights=5, refundable=True)
 
-    assert option.fact("nights") == 5
-    assert option.fact("absent") is None
+    assert option.facts["nights"] == 5
+    assert option.facts.get("absent") is None
     with pytest.raises(TypeError):
         option.facts["nights"] = 6  # type: ignore[index]
 

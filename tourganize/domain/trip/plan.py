@@ -24,6 +24,7 @@ from tourganize.domain.errors import (
     UnknownComponentKindError,
     UnknownOptionError,
 )
+from tourganize.domain.invariants import require_aware, require_text
 from tourganize.domain.options import OptionSlate
 from tourganize.domain.trip.completeness import PlanCompleteness
 from tourganize.domain.trip.component import ComponentStatus, PlanComponent
@@ -41,15 +42,8 @@ class TripPlan:
     components: dict[str, PlanComponent] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if type(self.plan_id) is not str or not self.plan_id.strip():
-            raise InvariantViolationError(
-                f"TripPlan.plan_id must be a non-empty string, got {self.plan_id!r}"
-            )
-        moment = self.created_at
-        if moment.tzinfo is None or moment.tzinfo.utcoffset(moment) is None:
-            raise InvariantViolationError(
-                f"TripPlan.created_at must be timezone-aware, got {moment!r}"
-            )
+        require_text(self.plan_id, "TripPlan.plan_id")
+        require_aware(self.created_at, "TripPlan.created_at")
 
     # -- reads ------------------------------------------------------------------------
 

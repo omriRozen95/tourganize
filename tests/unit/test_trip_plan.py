@@ -233,11 +233,6 @@ def test_completeness_across_selected_declined_and_open(
     assert completeness.open == ("gamma",)
     assert completeness.open_mentioned == ("gamma",)
     assert not completeness.is_closeable
-    assert completeness.explain() == (
-        ("alpha", "selected"),
-        ("beta", "declined"),
-        ("gamma", "open"),
-    )
 
 
 def test_an_unmentioned_open_kind_does_not_block_closing(
@@ -268,6 +263,23 @@ def test_a_failed_mentioned_component_keeps_the_plan_open(frozen_clock: FrozenCl
 
     assert completeness.open == ("alpha",)
     assert not completeness.is_closeable
+
+
+def test_a_failed_component_can_still_be_declined(frozen_clock: FrozenClock) -> None:
+    """The other way out of a component that will not source: the traveller drops it.
+
+    Completeness counts a failed component as open, so without this edge a plan with one
+    unsourceable kind in it could never be closed at all.
+    """
+    plan = plan_at(frozen_clock.now())
+    plan.mark_mentioned("alpha", 1)
+    plan.component("alpha").advance_to(ComponentStatus.FAILED)
+
+    plan.decline("alpha")
+
+    assert plan.component("alpha").status is ComponentStatus.DECLINED
+    assert plan.completeness().declined == ("alpha",)
+    assert plan.completeness().is_closeable
 
 
 def test_components_keep_the_order_they_entered_the_conversation(

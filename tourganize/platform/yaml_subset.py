@@ -31,6 +31,7 @@ module plus a dependency line.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, NoReturn
@@ -104,9 +105,17 @@ def _scan(text: str, origin: str) -> list[_Line]:
     return lines
 
 
-def _strip_comment(text: str) -> str:
-    """Remove a trailing ``#`` comment, ignoring ``#`` inside quotes."""
+def _outside_quotes(text: str) -> Iterator[tuple[int, str, int]]:
+    """Yield ``(index, char, depth)`` for every character of ``text`` that is not quoted.
+
+    Three readers need to find a *structural* character — the ``#`` that opens a comment, the
+    ``:`` that splits a mapping key, the ``,`` that splits a flow collection — and each was
+    walking the string with its own copy of the quote-and-bracket bookkeeping. This is that
+    walk, written once. ``depth`` counts the open ``[`` and ``{``; a caller that does not care
+    about nesting ignores it.
+    """
     quote = ""
+    depth = 0
     index = 0
     while index < len(text):
         char = text[index]
@@ -118,9 +127,20 @@ def _strip_comment(text: str) -> str:
                 quote = ""
         elif char in "\"'":
             quote = char
-        elif char == "#" and (index == 0 or text[index - 1] in " \t"):
-            return text[:index]
+        else:
+            if char in "[{":
+                depth += 1
+            elif char in "]}":
+                depth -= 1
+            yield index, char, depth
         index += 1
+
+
+def _strip_comment(text: str) -> str:
+    """Remove a trailing ``#`` comment, ignoring ``#`` inside quotes."""
+    for index, char, _depth in _outside_quotes(text):
+        if char == "#" and (index == 0 or text[index - 1] in " \t"):
+            return text[:index]
     return text
 
 
@@ -197,30 +217,20 @@ def _parse_sequence(
 
 
 def _split_key(text: str, line: _Line, origin: str) -> tuple[str, str] | None:
-    """Split ``key: value`` at the first structural colon, or return ``None``."""
-    quote = ""
-    depth = 0
-    index = 0
-    while index < len(text):
-        char = text[index]
-        if quote:
-            if quote == '"' and char == "\\":
-                index += 2
-                continue
-            if char == quote:
-                quote = ""
-        elif char in "\"'":
-            quote = char
-        elif char in "[{":
-            depth += 1
-        elif char in "]}":
-            depth -= 1
-        elif char == ":" and depth == 0 and (index + 1 == len(text) or text[index + 1] in " \t"):
-            key = text[:index].strip()
-            if not key:
-                _fail(origin, line, "a mapping key may not be empty")
-            return _key_of(key, line, origin), text[index + 1 :].strip()
-        index += 1
+    """Split ``key: value`` at the first structural colon, or return ``None``.
+
+    Structural means: outside quotes, outside any flow collection, and followed by whitespace
+    or the end of the line — so ``12:30`` and ``{a: 1}`` are values, not key separators.
+    """
+    for index, char, depth in _outside_quotes(text):
+        if char != ":" or depth != 0:
+            continue
+        if index + 1 < len(text) and text[index + 1] not in " \t":
+            continue
+        key = text[:index].strip()
+        if not key:
+            _fail(origin, line, "a mapping key may not be empty")
+        return _key_of(key, line, origin), text[index + 1 :].strip()
     return None
 
 
@@ -313,21 +323,9 @@ def _flow_body(text: str, closing: str, line: _Line, origin: str) -> str:
 
 def _split_flow(inner: str, line: _Line, origin: str) -> list[str]:
     parts: list[str] = []
-    quote = ""
-    depth = 0
     start = 0
-    for index, char in enumerate(inner):
-        if quote:
-            if char == quote:
-                quote = ""
-            continue
-        if char in "\"'":
-            quote = char
-        elif char in "[{":
-            depth += 1
-        elif char in "]}":
-            depth -= 1
-        elif char == "," and depth == 0:
+    for index, char, depth in _outside_quotes(inner):
+        if char == "," and depth == 0:
             parts.append(inner[start:index].strip())
             start = index + 1
     parts.append(inner[start:].strip())

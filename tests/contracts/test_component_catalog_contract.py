@@ -148,7 +148,10 @@ def test_an_invalid_catalog_is_refused_by_every_adapter(
 
 @pytest.mark.parametrize("build", CATALOGS.values(), ids=CATALOGS)
 def test_schema_for_is_declared_and_awaits_f03(build: CatalogBuilder, tmp_path: Path) -> None:
-    """F03 implements this method and replaces this assertion with a real one."""
+    """F03's Starting state requires this method declared but unimplemented on every adapter.
+
+    F03 implements it and replaces this assertion with a real one.
+    """
     catalog = build(tmp_path)
 
     with pytest.raises(NotImplementedError):

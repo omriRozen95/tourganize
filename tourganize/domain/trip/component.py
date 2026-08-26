@@ -10,13 +10,16 @@ machine, and :meth:`PlanComponent.advance_to` is the only way to move, so an imp
 history — a component selected before anything was ever offered — cannot be recorded even by
 a caller that means well.
 
-Two edges are worth explaining, because they are what makes the client's rules work:
+Three edges are worth explaining, because they are what makes the client's rules work:
 
 * ``AWAITING_CHOICE -> SOURCING`` is the choose-or-refine loop. Refinement re-sources the
   *same* component with the next ``round_index``; there is no bound on how often.
-* ``FAILED -> SOURCING`` exists because a failure to source is usually transient. ``DECLINED``
-  has no way out at all: a kind the traveller turned down is never offered again in that
-  session.
+* ``FAILED -> SOURCING`` exists because a failure to source is usually transient, and
+  ``FAILED -> DECLINED`` because the other honest way out of a component that will not source
+  is for the traveller to drop it. Both matter: ``PlanCompleteness`` counts a failed component
+  as *open*, so without the second edge a plan could never be closed over one.
+* ``DECLINED`` has no way out at all: a kind the traveller turned down is never offered again
+  in that session.
 """
 
 from __future__ import annotations
@@ -28,10 +31,16 @@ from types import MappingProxyType
 from typing import Final
 
 from tourganize.domain.errors import IllegalTransitionError, InvariantViolationError
+from tourganize.domain.invariants import require_text
 from tourganize.domain.options import OptionSlate
 from tourganize.domain.trip.selection import Selection
 
-__all__ = ["LEGAL_TRANSITIONS", "ComponentStatus", "PlanComponent"]
+__all__ = [
+    "LEGAL_TRANSITIONS",
+    "SETTLED_STATUSES",
+    "ComponentStatus",
+    "PlanComponent",
+]
 
 
 class ComponentStatus(Enum):
@@ -97,7 +106,9 @@ _TRANSITIONS: Final[dict[ComponentStatus, frozenset[ComponentStatus]]] = {
         {ComponentStatus.SOURCING, ComponentStatus.ELICITING, ComponentStatus.FAILED}
     ),
     ComponentStatus.DECLINED: frozenset(),
-    ComponentStatus.FAILED: frozenset({ComponentStatus.SOURCING, ComponentStatus.ELICITING}),
+    ComponentStatus.FAILED: frozenset(
+        {ComponentStatus.SOURCING, ComponentStatus.ELICITING, ComponentStatus.DECLINED}
+    ),
 }
 
 #: The legal Component Status transitions, as data. Read-only on purpose: a feature that
@@ -127,10 +138,7 @@ class PlanComponent:
     mentioned_on_turn: int | None = None
 
     def __post_init__(self) -> None:
-        if type(self.kind_key) is not str or not self.kind_key.strip():
-            raise InvariantViolationError(
-                f"PlanComponent.kind_key must be a non-empty string, got {self.kind_key!r}"
-            )
+        require_text(self.kind_key, "PlanComponent.kind_key")
 
     @property
     def is_settled(self) -> bool:

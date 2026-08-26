@@ -39,14 +39,15 @@ EXIT_DOCTOR_FAILED: Final = 1
 EXIT_NOT_IMPLEMENTED: Final = 2
 EXIT_CONFIGURATION_ERROR: Final = 3
 
-#: Sub-command -> (feature, what that feature delivers). Each entry is deleted from this
-#: table by the feature that implements the command.
-#: Sub-commands of ``catalog`` that later features implement, same convention as above.
+#: Sub-commands of ``catalog`` that later features implement:
+#: name -> (feature, what that feature delivers). Each entry is deleted from this table by
+#: the feature that implements the command.
 PLANNED_CATALOG_COMMANDS: Final[Mapping[str, tuple[str, str]]] = {
     "gaps": ("F03", "the Gap Report for a Component Kind"),
     "agenda": ("F04", "the Planning Agenda, with bands and ranks"),
 }
 
+#: Top-level sub-commands that later features implement, same convention as above.
 PLANNED_COMMANDS: Final[Mapping[str, tuple[str, str]]] = {
     "chat": ("F07", "the terminal Presentation Surface"),
     "resume": ("F12", "session persistence and resume"),
