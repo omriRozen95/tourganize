@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from conftest import write_catalog
 
 from tourganize.application.composition import build_container
 from tourganize.application.diagnostics import run_diagnostics
@@ -16,7 +17,9 @@ from tourganize.platform.settings import Settings
 SettingsFactory = Callable[..., Settings]
 
 
-def test_a_healthy_installation_passes_every_check(settings_factory: SettingsFactory) -> None:
+def test_a_healthy_installation_passes_every_check(
+    settings_factory: SettingsFactory, catalog_file: Path
+) -> None:
     report = run_diagnostics(build_container(settings_factory()), version="9.9.9")
 
     assert report.ok
@@ -25,8 +28,10 @@ def test_a_healthy_installation_passes_every_check(settings_factory: SettingsFac
         "data_dir",
         "clock",
         "telemetry_sink",
+        "component_catalog",
     }
     assert "doctor: ok" in report.render()
+    assert catalog_file.exists()
 
 
 def test_the_data_dir_is_probed_by_writing(settings_factory: SettingsFactory) -> None:
@@ -59,7 +64,8 @@ def test_an_unwritable_data_dir_fails_doctor_rather_than_a_later_write(
 
         assert not report.ok
         failures = [check for check in report.checks if not check.ok]
-        assert [check.name for check in failures] == ["data_dir", "telemetry_sink"]
+        assert "data_dir" in [check.name for check in failures]
+        assert "telemetry_sink" in [check.name for check in failures]
         assert "doctor: FAILED" in report.render()
     finally:
         blocked.chmod(stat.S_IRWXU)
@@ -76,6 +82,67 @@ def test_a_config_dir_that_is_not_a_directory_fails(
 
     assert not report.ok
     assert any(check.name == "config_dir" and not check.ok for check in report.checks)
+
+
+def test_a_catalog_that_cannot_be_loaded_fails_doctor(
+    settings_factory: SettingsFactory,
+) -> None:
+    """From F02 on, an installation with no Component Catalog cannot plan anything."""
+    report = run_diagnostics(build_container(settings_factory()), version="9.9.9")
+
+    catalog = next(check for check in report.checks if check.name == "component_catalog")
+    assert not catalog.ok
+    assert "does not exist" in catalog.detail
+    assert not report.ok
+
+
+def test_an_invalid_catalog_fails_doctor_with_every_problem_named(
+    settings_factory: SettingsFactory, tmp_path: Path
+) -> None:
+    write_catalog(
+        tmp_path / "config",
+        """\
+version: 1
+kinds:
+  - kind_key: alpha
+    message_key: component.alpha
+    priority_weight: 1
+    schema_key: alpha.v1
+    requires_outcome_of: [beta]
+  - kind_key: alpha
+    message_key: component.alpha
+    priority_weight: 2
+    schema_key: alpha.v1
+""",
+    )
+
+    report = run_diagnostics(build_container(settings_factory()), version="9.9.9")
+
+    catalog = next(check for check in report.checks if check.name == "component_catalog")
+    assert not catalog.ok
+    assert "duplicate kind_key 'alpha'" in catalog.detail
+    assert "which no kind declares" in catalog.detail
+
+
+def test_an_empty_catalog_fails_doctor(settings_factory: SettingsFactory, tmp_path: Path) -> None:
+    write_catalog(tmp_path / "config", "version: 1\nkinds: []\n")
+
+    report = run_diagnostics(build_container(settings_factory()), version="9.9.9")
+
+    catalog = next(check for check in report.checks if check.name == "component_catalog")
+    assert not catalog.ok
+    assert "declares no Component Kinds" in catalog.detail
+
+
+def test_the_catalog_check_counts_declared_and_enabled_kinds(
+    settings_factory: SettingsFactory, catalog_file: Path
+) -> None:
+    report = run_diagnostics(build_container(settings_factory()), version="9.9.9")
+
+    catalog = next(check for check in report.checks if check.name == "component_catalog")
+    assert catalog.ok
+    assert catalog.detail.startswith("3 Component Kinds (2 enabled)")
+    assert str(catalog_file) in catalog.detail
 
 
 def test_no_secret_value_appears_in_the_rendered_report(
@@ -102,4 +169,5 @@ def test_the_report_lists_unrecognised_keys_and_pending_ports(
 
     assert "TOURGANIZE_LGO_LEVEL" in rendered
     assert "LlmGateway (F08)" in rendered
+    assert "ComponentCatalog" not in report.pending_ports
     assert rendered.startswith("tourganize 9.9.9")

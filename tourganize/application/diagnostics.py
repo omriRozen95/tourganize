@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Final
 
 from tourganize.application.composition import PENDING_PORTS, Container
+from tourganize.domain.invariants import is_aware
+from tourganize.platform.errors import ConfigurationError
 from tourganize.ports.platform import TelemetryEvent
 
 __all__ = ["CheckResult", "DoctorReport", "run_diagnostics"]
@@ -80,6 +82,7 @@ def run_diagnostics(
         _check_data_dir(settings.data_dir),
         _check_clock(container),
         _check_telemetry_sink(container),
+        _check_component_catalog(container),
     ]
     return DoctorReport(
         version=version,
@@ -93,7 +96,8 @@ def run_diagnostics(
 
 def _check_config_dir(config_dir: Path) -> CheckResult:
     if not config_dir.exists():
-        # No configuration file is required yet; F02 is the first feature that reads one.
+        # Absence is reported by the check that needs a file, naming the file: `config_dir`
+        # itself only has to exist by the time something reads from it.
         return CheckResult("config_dir", True, f"{config_dir} does not exist yet")
     if not config_dir.is_dir():
         return CheckResult("config_dir", False, f"{config_dir} is not a directory")
@@ -113,7 +117,7 @@ def _check_data_dir(data_dir: Path) -> CheckResult:
 
 def _check_clock(container: Container) -> CheckResult:
     moment = container.clock.now()
-    if moment.tzinfo is None or moment.tzinfo.utcoffset(moment) is None:
+    if not is_aware(moment):
         return CheckResult("clock", False, "now() returned a naive datetime")
     return CheckResult("clock", True, f"now() = {moment.isoformat()}")
 
@@ -134,3 +138,27 @@ def _check_telemetry_sink(container: Container) -> CheckResult:
             "telemetry_sink", False, f"{name} stopped recording after a write failure"
         )
     return CheckResult("telemetry_sink", True, f"{name} accepted a probe event")
+
+
+def _check_component_catalog(container: Container) -> CheckResult:
+    """Load the Component Catalog for real, and count what it declares.
+
+    This is the check that makes ``doctor`` worth running after an edit to
+    ``components.yaml``: a duplicate key, a dangling Outcome Dependency or a cycle fails here,
+    with the same message ``tourganize catalog validate`` prints, instead of surfacing halfway
+    through a conversation.
+    """
+    catalog = container.component_catalog
+    origin = container.settings.catalog_path
+    try:
+        kinds = catalog.kinds()
+    except ConfigurationError as exc:
+        return CheckResult("component_catalog", False, str(exc))
+    if not kinds:
+        return CheckResult("component_catalog", False, f"{origin} declares no Component Kinds")
+    enabled = sum(1 for kind in kinds if kind.enabled)
+    return CheckResult(
+        "component_catalog",
+        True,
+        f"{len(kinds)} Component Kinds ({enabled} enabled) from {origin}",
+    )

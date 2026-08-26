@@ -74,7 +74,9 @@ files = ["tourganize"]
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-pythonpath = ["."]
+# `tests` is on the path so that a test module can import the shared helpers next to it
+# (`conftest.write_catalog`, `boundaries`) without depending on pytest's import mode.
+pythonpath = [".", "tests"]
 addopts = "-ra --strict-markers --cov=tourganize --cov-report=term-missing"
 
 [tool.coverage.run]
@@ -133,6 +135,7 @@ forbidden_modules = ["tourganize.adapters"]
 name = "Adapter sub-packages are independent of each other"
 type = "independence"
 modules = [
+  "tourganize.adapters.catalog",
   "tourganize.adapters.clock",
   "tourganize.adapters.options",
   "tourganize.adapters.presentation",

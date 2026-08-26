@@ -12,18 +12,22 @@ and finally exports a written plan.
 | [docs/roadmap.md](docs/roadmap.md) | The 25 features, their dependency graph and the build order. **Read this first.** |
 | [docs/architecture/overview.md](docs/architecture/overview.md) | Bounded contexts, package layout, ports, the shape of one turn |
 | [docs/architecture/glossary.md](docs/architecture/glossary.md) | The naming authority |
-| [docs/architecture/decisions.md](docs/architecture/decisions.md) | D1–D12: each decision, its cost, and the feature that reverses it |
+| [docs/architecture/decisions.md](docs/architecture/decisions.md) | D1–D13: each decision, its cost, and the feature that reverses it |
 | `tourganize/` | The application |
 | `config/` | Catalog, prompts and messages — data, not code |
 | `tests/` | See [tests/README.md](tests/README.md) for the conventions |
 
 ## Status
 
-**F01 has landed: the foundation.** The package, typed settings, structured logging, the
-`Clock` and `TelemetrySink` ports with their adapters, the Composition Root, the CLI with
-`doctor`, the container, and the import-linter contracts that keep the domain
-dependency-free. The planning features start at
-[F02](docs/features/F02-trip-plan-domain-core.md).
+**F02 has landed: the planning vocabulary.** On top of F01's foundation — typed settings,
+structured logging, the `Clock` and `TelemetrySink` ports, the Composition Root, `doctor`,
+the container and the import-linter contracts — there is now a Trip Plan made of Plan
+Components, whose *types* are declared as data in
+[`config/catalog/components.yaml`](config/catalog/components.yaml). Flights, lodging and
+ground transport are configuration: a test asserts that grepping `tourganize/` for a shipped
+`kind_key` returns nothing at all. Next is
+[F03](docs/features/F03-requirement-schemas-and-gap-analysis.md), which says what has to be
+known before a component can be planned.
 
 ## Getting started
 
@@ -32,6 +36,8 @@ pip install -e ".[dev]"
 
 tourganize --version
 tourganize doctor          # resolved settings, selected adapters, per-port health
+tourganize catalog show    # the declared Component Kinds, weights and dependencies
+tourganize catalog validate # exit 0, or exit 3 naming every problem in the catalog
 tourganize chat            # exits 2 until F07 implements it
 ```
 
@@ -63,6 +69,7 @@ secrets redacted, and reports any `TOURGANIZE_*` key it does not recognise.
 | `TOURGANIZE_LOG_LEVEL` | Python log level | `INFO` |
 | `TOURGANIZE_LOG_FORMAT` | `json` or `human` | `human` in dev, `json` otherwise |
 | `TOURGANIZE_CONFIG_DIR` | Root of `catalog/`, `prompts/`, `messages/` | `./config` |
+| `TOURGANIZE_CATALOG_PATH` | The Component Catalog file | `${TOURGANIZE_CONFIG_DIR}/catalog/components.yaml` |
 | `TOURGANIZE_DATA_DIR` | Writable state (sessions, exports, indexes) | `./var` |
 | `TOURGANIZE_SECRETS_FILE` | Optional `KEY=value` file, merged *under* the environment | unset |
 | `TOURGANIZE_TELEMETRY_SINK` | `null` or `jsonl` | `jsonl` |

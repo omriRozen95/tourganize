@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Final, final
 
+from tourganize.domain.invariants import is_aware
 from tourganize.platform.errors import ContractViolationError
 
 __all__ = ["DEFAULT_MOMENT", "FrozenClock"]
@@ -42,6 +43,8 @@ class FrozenClock:
 
 
 def _require_aware(moment: datetime) -> datetime:
-    if moment.tzinfo is None or moment.tzinfo.utcoffset(moment) is None:
+    # The question is the domain's; the exception is this adapter's, because a Clock that
+    # hands back a naive datetime has broken its *port* contract, not a domain invariant.
+    if not is_aware(moment):
         raise ContractViolationError(f"a Clock moment must be timezone-aware, got {moment!r}")
     return moment

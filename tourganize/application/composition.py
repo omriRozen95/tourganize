@@ -8,7 +8,6 @@ Every later feature adds its port slot to :class:`Container` and its adapter sel
 Slots the roadmap will add here, with the feature that owns each:
 
 ===========================  =========================================
-``component_catalog``        F02  ``ComponentCatalog``
 ``priority_policy``          F04  ``PriorityPolicy``
 ``turn_interpreter``         F05  ``TurnInterpreter``
 ``option_slate_planner``     F05  ``OptionSlatePlanner``
@@ -30,10 +29,12 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
+from tourganize.adapters.catalog.yaml import YamlComponentCatalog
 from tourganize.adapters.clock.system import SystemClock
 from tourganize.adapters.telemetry.jsonl import JsonlTelemetrySink
 from tourganize.adapters.telemetry.null import NullTelemetrySink
 from tourganize.platform.settings import Settings, default_telemetry_path
+from tourganize.ports.catalog import ComponentCatalog
 from tourganize.ports.platform import Clock, TelemetrySink
 
 __all__ = ["Container", "build_container"]
@@ -42,7 +43,6 @@ __all__ = ["Container", "build_container"]
 #: prints this so the surface of what is not yet built stays visible.
 PENDING_PORTS: Final[MappingProxyType[str, str]] = MappingProxyType(
     {
-        "ComponentCatalog": "F02",
         "PriorityPolicy": "F04",
         "TurnInterpreter": "F05",
         "OptionSlatePlanner": "F05",
@@ -66,6 +66,7 @@ class Container:
     settings: Settings
     clock: Clock
     telemetry_sink: TelemetrySink
+    component_catalog: ComponentCatalog
 
     def adapters(self) -> MappingProxyType[str, str]:
         """Return ``port name -> adapter class name``, for ``doctor`` and telemetry."""
@@ -73,6 +74,7 @@ class Container:
             {
                 "Clock": type(self.clock).__name__,
                 "TelemetrySink": type(self.telemetry_sink).__name__,
+                "ComponentCatalog": type(self.component_catalog).__name__,
             }
         )
 
@@ -83,6 +85,9 @@ def build_container(settings: Settings) -> Container:
         settings=settings,
         clock=SystemClock(),
         telemetry_sink=_build_telemetry_sink(settings),
+        # Constructing the catalog does not read the file: a broken catalog has to be a
+        # failing `doctor` check, not an exception thrown while the container is being wired.
+        component_catalog=YamlComponentCatalog(settings.catalog_path),
     )
 
 

@@ -14,16 +14,20 @@ way of loading configuration.
 | ``TOURGANIZE_LOG_LEVEL`` | Python log level name | ``INFO`` |
 | ``TOURGANIZE_LOG_FORMAT`` | ``json`` or ``human`` | ``human`` in dev, ``json`` otherwise |
 | ``TOURGANIZE_CONFIG_DIR`` | Root of ``catalog/``, ``prompts/``, ``messages/`` | ``config`` |
+| ``TOURGANIZE_CATALOG_PATH`` | Component Catalog file | ``$CONFIG_DIR/catalog/components.yaml`` |
 | ``TOURGANIZE_DATA_DIR`` | Writable state (sessions, exports, indexes) | ``var`` |
 | ``TOURGANIZE_SECRETS_FILE`` | Optional ``KEY=value`` file merged *under* the environment | unset |
 | ``TOURGANIZE_TELEMETRY_SINK`` | ``null`` or ``jsonl`` | ``jsonl`` |
 | ``TOURGANIZE_TELEMETRY_PATH`` | Where the JSONL sink writes | ``$DATA_DIR/telemetry.jsonl`` |
 
-Two keys are worth a word on. ``TOURGANIZE_TELEMETRY_PATH`` defaults to its documented value
-whichever sink is selected — the ``null`` sink simply never writes there — so nothing
-downstream has to re-derive it. And a secrets file may only set ``TOURGANIZE_*`` keys: a
-stray key is refused rather than ignored, because a secret believed to be loaded is worse
-than one that is missing.
+Three keys are worth a word on. ``TOURGANIZE_CATALOG_PATH`` follows ``TOURGANIZE_CONFIG_DIR``
+unless it is set explicitly, so moving the configuration directory moves the catalog with it;
+a catalog that is not *there* is not an error here, because a missing file is a runtime
+condition that ``doctor`` reports and the command that needs it refuses.
+``TOURGANIZE_TELEMETRY_PATH`` defaults to its documented value whichever sink is selected —
+the ``null`` sink simply never writes there — so nothing downstream has to re-derive it. And a
+secrets file may only set ``TOURGANIZE_*`` keys: a stray key is refused rather than ignored,
+because a secret believed to be loaded is worse than one that is missing.
 """
 
 from __future__ import annotations
@@ -45,6 +49,7 @@ __all__ = [
     "LogFormat",
     "Settings",
     "TelemetrySinkName",
+    "default_catalog_path",
     "default_telemetry_path",
     "unrecognised_keys",
 ]
@@ -63,6 +68,7 @@ DEFAULT_CONFIG_DIR: Final = Path("config")
 DEFAULT_DATA_DIR: Final = Path("var")
 DEFAULT_LOG_LEVEL: Final = "INFO"
 TELEMETRY_FILENAME: Final = "telemetry.jsonl"
+CATALOG_RELATIVE_PATH: Final = Path("catalog") / "components.yaml"
 
 #: A ``TOURGANIZE_*`` key ending in one of these is treated as a secret: it is wrapped in
 #: :class:`SecretValue` and never rendered by ``doctor`` or the logs.
@@ -85,6 +91,7 @@ KNOWN_KEYS: Final = frozenset(
         "TOURGANIZE_LOG_LEVEL",
         "TOURGANIZE_LOG_FORMAT",
         "TOURGANIZE_CONFIG_DIR",
+        "TOURGANIZE_CATALOG_PATH",
         "TOURGANIZE_DATA_DIR",
         "TOURGANIZE_SECRETS_FILE",
         "TOURGANIZE_TELEMETRY_SINK",
@@ -101,6 +108,7 @@ class Settings:
     log_level: str
     log_format: LogFormat
     config_dir: Path
+    catalog_path: Path
     data_dir: Path
     telemetry_sink: TelemetrySinkName
     telemetry_path: Path | None
@@ -118,12 +126,16 @@ class Settings:
         log_format_default: LogFormat = "human" if env == "dev" else "json"
         sink = _choice(merged, "TOURGANIZE_TELEMETRY_SINK", _TELEMETRY_SINKS, "jsonl")
         data_dir = _directory(merged, "TOURGANIZE_DATA_DIR", DEFAULT_DATA_DIR)
+        config_dir = _directory(merged, "TOURGANIZE_CONFIG_DIR", DEFAULT_CONFIG_DIR)
 
         return cls(
             env=env,
             log_level=_log_level(merged, "TOURGANIZE_LOG_LEVEL", DEFAULT_LOG_LEVEL),
             log_format=_choice(merged, "TOURGANIZE_LOG_FORMAT", _LOG_FORMATS, log_format_default),
-            config_dir=_directory(merged, "TOURGANIZE_CONFIG_DIR", DEFAULT_CONFIG_DIR),
+            config_dir=config_dir,
+            catalog_path=_required_file(
+                merged, "TOURGANIZE_CATALOG_PATH", default_catalog_path(config_dir)
+            ),
             data_dir=data_dir,
             telemetry_sink=sink,
             telemetry_path=_file(
@@ -144,6 +156,7 @@ class Settings:
             "log_level": self.log_level,
             "log_format": self.log_format,
             "config_dir": str(self.config_dir),
+            "catalog_path": str(self.catalog_path),
             "data_dir": str(self.data_dir),
             "telemetry_sink": self.telemetry_sink,
             "telemetry_path": "unset" if self.telemetry_path is None else str(self.telemetry_path),
@@ -160,6 +173,11 @@ def default_telemetry_path(data_dir: Path) -> Path:
     twice: the documented default has one definition.
     """
     return data_dir / TELEMETRY_FILENAME
+
+
+def default_catalog_path(config_dir: Path) -> Path:
+    """Where the Component Catalog lives unless ``TOURGANIZE_CATALOG_PATH`` says otherwise."""
+    return config_dir / CATALOG_RELATIVE_PATH
 
 
 def unrecognised_keys(environ: Mapping[str, str]) -> tuple[str, ...]:
@@ -285,3 +303,14 @@ def _file(environ: Mapping[str, str], key: str, default: Path | None) -> Path | 
     if path.exists() and not path.is_file():
         raise ConfigurationError(f"{key}={path} exists but is not a file")
     return path
+
+
+def _required_file(environ: Mapping[str, str], key: str, default: Path) -> Path:
+    """A file-valued key that always resolves — absence is a runtime concern, not a setting.
+
+    A catalog that is missing is reported by ``doctor`` and refused by the command that needs
+    it. Refusing it here would make every ``tourganize --version`` in a fresh checkout an
+    exit 3.
+    """
+    resolved = _file(environ, key, default)
+    return default if resolved is None else resolved

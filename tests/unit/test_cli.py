@@ -1,4 +1,4 @@
-"""The CLI surface: two working commands, five honest stubs, four exit codes."""
+"""The CLI surface: the commands that work, the stubs that name their feature, four exit codes."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from conftest import write_catalog
 
 from tourganize import __version__
 from tourganize.cli import (
@@ -14,6 +15,7 @@ from tourganize.cli import (
     EXIT_DOCTOR_FAILED,
     EXIT_NOT_IMPLEMENTED,
     EXIT_OK,
+    PLANNED_CATALOG_COMMANDS,
     PLANNED_COMMANDS,
     main,
 )
@@ -26,6 +28,8 @@ def _run(argv: list[str], environ: Mapping[str, str] | None = None) -> tuple[int
 
 
 def _environ(tmp_path: Path, **extra: str) -> dict[str, str]:
+    """A healthy installation in ``tmp_path``, Component Catalog included."""
+    write_catalog(tmp_path / "config")
     environ = {
         "TOURGANIZE_ENV": "test",
         "TOURGANIZE_CONFIG_DIR": str(tmp_path / "config"),
@@ -65,6 +69,108 @@ def test_chat_names_f07() -> None:
     assert "F07" in err
 
 
+@pytest.mark.parametrize("action", sorted(PLANNED_CATALOG_COMMANDS))
+def test_every_planned_catalog_action_exits_2_naming_its_feature(
+    action: str, tmp_path: Path
+) -> None:
+    feature, _summary = PLANNED_CATALOG_COMMANDS[action]
+
+    code, out, err = _run(["catalog", action], _environ(tmp_path))
+
+    assert code == EXIT_NOT_IMPLEMENTED
+    assert feature in err
+    assert action in err
+    assert out == ""
+
+
+def test_catalog_show_lists_the_declared_kinds(tmp_path: Path) -> None:
+    code, out, _ = _run(["catalog", "show"], _environ(tmp_path))
+
+    assert code == EXIT_OK
+    assert "kind_key" in out
+    assert "alpha" in out and "beta" in out and "gamma" in out
+    assert "300" in out
+    # beta awaits alpha's outcome, and gamma is declared but disabled.
+    beta = next(line for line in out.splitlines() if line.startswith("beta"))
+    gamma = next(line for line in out.splitlines() if line.startswith("gamma"))
+    assert "alpha" in beta
+    assert gamma.endswith("no")
+
+
+def test_catalog_validate_accepts_a_sound_catalog(tmp_path: Path) -> None:
+    code, out, err = _run(["catalog", "validate"], _environ(tmp_path))
+
+    assert code == EXIT_OK
+    assert "no problems found" in out
+    assert err == ""
+
+
+#: A broken catalog per validation rule, with the phrase the CLI must print for it. Keyed by
+#: a short name so the parametrised test ids read as the rules they exercise.
+BROKEN_CATALOGS = {
+    "duplicate_key": (
+        "duplicate kind_key 'alpha'",
+        "version: 1\n"
+        "kinds:\n"
+        "  - {kind_key: alpha, message_key: component.alpha, priority_weight: 1,"
+        " schema_key: alpha.v1}\n"
+        "  - {kind_key: alpha, message_key: component.alpha, priority_weight: 2,"
+        " schema_key: alpha.v1}\n",
+    ),
+    "dangling_dependency": (
+        "which no kind declares",
+        "version: 1\n"
+        "kinds:\n"
+        "  - {kind_key: alpha, message_key: component.alpha, priority_weight: 1,"
+        " schema_key: alpha.v1, requires_outcome_of: [nowhere]}\n",
+    ),
+    "dependency_cycle": (
+        "dependency cycle",
+        "version: 1\n"
+        "kinds:\n"
+        "  - {kind_key: alpha, message_key: component.alpha, priority_weight: 1,"
+        " schema_key: alpha.v1, requires_outcome_of: [beta]}\n"
+        "  - {kind_key: beta, message_key: component.beta, priority_weight: 2,"
+        " schema_key: beta.v1, requires_outcome_of: [alpha]}\n",
+    ),
+}
+
+
+@pytest.mark.parametrize("rule", sorted(BROKEN_CATALOGS))
+def test_catalog_validate_exits_3_and_names_the_problem(rule: str, tmp_path: Path) -> None:
+    expected, body = BROKEN_CATALOGS[rule]
+    environ = _environ(tmp_path)
+    write_catalog(tmp_path / "config", body)
+
+    code, out, err = _run(["catalog", "validate"], environ)
+
+    assert code == EXIT_CONFIGURATION_ERROR
+    assert expected in err
+    assert out == ""
+
+
+def test_catalog_show_exits_3_when_there_is_no_catalog(tmp_path: Path) -> None:
+    environ = _environ(tmp_path, TOURGANIZE_CATALOG_PATH=str(tmp_path / "absent.yaml"))
+
+    code, out, err = _run(["catalog", "show"], environ)
+
+    assert code == EXIT_CONFIGURATION_ERROR
+    assert "does not exist" in err
+    assert out == ""
+
+
+def test_catalog_without_an_action_says_what_it_offers(tmp_path: Path) -> None:
+    """And says it before reading the file, so a missing action is not reported as a bad catalog."""
+    environ = _environ(tmp_path, TOURGANIZE_CATALOG_PATH=str(tmp_path / "absent.yaml"))
+
+    code, out, err = _run(["catalog"], environ)
+
+    assert code == EXIT_NOT_IMPLEMENTED
+    assert "show" in err and "validate" in err
+    assert "does not exist" not in err
+    assert out == ""
+
+
 def test_doctor_reports_settings_adapters_and_ports(tmp_path: Path) -> None:
     code, out, _ = _run(["doctor"], _environ(tmp_path))
 
@@ -72,7 +178,9 @@ def test_doctor_reports_settings_adapters_and_ports(tmp_path: Path) -> None:
     assert f"tourganize {__version__}" in out
     assert "telemetry_sink: jsonl" in out
     assert "TelemetrySink: JsonlTelemetrySink" in out
+    assert "ComponentCatalog: YamlComponentCatalog" in out
     assert "[ok  ] clock" in out
+    assert "[ok  ] component_catalog" in out
     assert "doctor: ok" in out
 
 
