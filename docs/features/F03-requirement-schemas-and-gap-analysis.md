@@ -134,9 +134,19 @@ class RequirementSet:
     component_kind: str
     values: Mapping[str, RequirementValue]
     superseded: tuple[RequirementValue, ...] = ()
-    def with_updates(self, updates: Sequence[RequirementUpdate]) -> "RequirementSet": ...
+    def with_updates(
+        self, updates: Sequence[RequirementUpdate], *, schema: RequirementSchema
+    ) -> "RequirementSet": ...
     def digest(self) -> str: ...
+    def provenance_of(self, field_name: str) -> RequirementValue | None: ...
 ```
+
+The schema is a *parameter* of `with_updates` rather than a field of the set: a set is small,
+copied every turn and persisted by F12, while a schema is shared, versioned and loaded from a file —
+and passing it in is what lets the merge raise `UnknownFieldError` for a field nobody declared, which
+the Replaceability notes require. `with_updates` normalises what it can and stores what it cannot
+verbatim: an *invalid* value has to survive into the set, or `GapReport.invalid` would have nothing
+to report and the dialogue nothing to re-ask about.
 
 **Ports consumed:** `ComponentCatalog` (F02) for `schema_for(kind_key)`.
 

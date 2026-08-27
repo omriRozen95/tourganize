@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is right now
 
-**A specification repository with its foundation and its domain core built.** F01 and F02 have
-landed: there is an installable `tourganize` package, a test suite, a CPU-only container and CI; and
-on top of that a Trip Plan made of Plan Components whose *types* are declared as data in
-`config/catalog/components.yaml`. Working commands are `tourganize --version`, `doctor`,
-`catalog show` and `catalog validate`. The remaining 23 feature specs are still the plan, implemented
-one at a time, in order.
+**A specification repository with its foundation, its domain core and its requirement model built.**
+F01–F03 have landed: there is an installable `tourganize` package, a test suite, a CPU-only container
+and CI; a Trip Plan made of Plan Components whose *types* are declared as data in
+`config/catalog/components.yaml`; and, per kind, a Requirement Schema in `config/catalog/schemas/`
+saying what has to be known before that component can be planned. Working commands are
+`tourganize --version`, `doctor`, `catalog show`, `catalog validate` and `catalog gaps`. The
+remaining 22 feature specs are still the plan, implemented one at a time, in order.
 
 Four kinds of file, with different rules:
 
@@ -20,7 +21,7 @@ Four kinds of file, with different rules:
 | `docs/**` | The deliverable | Edit freely, but honour the consistency rules below. |
 | `tourganize/**`, `tests/**`, `config/**`, `docker/**` | The implementation | Governed by the feature file it belongs to plus the invariants below. |
 
-The next thing to build is `docs/features/F03-requirement-schemas-and-gap-analysis.md`. Read
+The next thing to build is `docs/features/F04-component-prioritization-policy.md`. Read
 `docs/roadmap.md` before starting any implementation work.
 
 ## Reading order for a new session
@@ -85,6 +86,7 @@ pytest                                    # full suite
 pytest tests/unit/test_settings_defaults.py::test_every_documented_default            # single test
 tourganize doctor                         # resolved settings, adapter selection, per-port health
 tourganize catalog show                   # the declared Component Kinds; `validate` exits 0 or 3
+tourganize catalog gaps --kind lodging    # the Gap Report; `--set '<json>'` supplies known values
 docker compose --profile dev-cpu run --rm app tourganize doctor
 ```
 
@@ -95,8 +97,8 @@ rather than skip — that is the test which proves the gate rejects a planted vi
 If a contract has to be weakened to make a feature compile, that needs an ADR entry, not a config
 tweak.
 
-Commands added by later features (each defined in its own spec): `tourganize catalog gaps` (F03) and
-`catalog agenda` (F04), `chat` (F07), `llm probe` (F08), `messages lint` (F10), `eval` / `eval report` /
+Commands added by later features (each defined in its own spec): `catalog agenda` (F04),
+`chat` (F07), `llm probe` (F08), `messages lint` (F10), `eval` / `eval report` /
 `eval parity` (F11, F21), `sessions` / `resume` (F12), `export` (F13), `tools list|call` (F15),
 `docs add|list|query|index` (F18, F19). Run one golden conversation with
 `tourganize eval --only <conversation_id>`.
@@ -117,10 +119,11 @@ states what each owns *and* what it is forbidden to know.
 ### The central abstraction
 
 A **Plan Component** identified by a `kind_key`, typed by a **Component Kind** declared as data in
-`config/catalog/components.yaml`. Flights, lodging and ground transport are *configuration*, not
-classes and not `if` branches. Adding `dining` must require zero Python changes — F02, F03, F06 and F13
-each carry a test that proves it, and F02's DoD asserts that grepping `tourganize/` for topic strings
-returns nothing.
+`config/catalog/components.yaml`, whose requirements are declared as data in
+`config/catalog/schemas/<schema_key>.yaml`. Flights, lodging and ground transport are *configuration*,
+not classes and not `if` branches. Adding `dining` must require zero Python changes — F02, F03, F06 and
+F13 each carry a test that proves it, and F02's DoD asserts that grepping `tourganize/` for topic
+strings returns nothing.
 
 ### One turn, end to end
 
@@ -133,9 +136,10 @@ all control flow and no wording; the surface and Language Services turn Acts int
 
 ### Ports and the feature that introduces each
 
-`Clock`, `TelemetrySink` (F01) · `ComponentCatalog` (F02) · `PriorityPolicy` (F04) · `TurnInterpreter`,
-`OptionSlatePlanner` (F05) · `OptionSource` (F06) · `PresentationSurface` (F07) · `LlmGateway` (F08) ·
-`LanguageDetector` (F10) · `SessionRepository` (F12) · `ItineraryRenderer` (F13) · `ToolBroker` (F15) ·
+`Clock`, `TelemetrySink` (F01) · `ComponentCatalog` (F02, `schema_for` completed by F03) ·
+`PriorityPolicy` (F04) · `TurnInterpreter`, `OptionSlatePlanner` (F05) · `OptionSource` (F06) ·
+`PresentationSurface` (F07) · `LlmGateway` (F08) · `LanguageDetector` (F10) ·
+`SessionRepository` (F12) · `ItineraryRenderer` (F13) · `ToolBroker` (F15) ·
 `KnowledgeCorpus`, `TextExtractor`, `PassageSplitter` (F18) · `KnowledgeRetriever`, `EmbeddingModel` (F19).
 
 Contract suites in `tests/contracts/` are parametrised over *every* adapter of a port, including fakes.
@@ -151,7 +155,15 @@ guards it; if one starts failing, fix the code, not the test.
 - **Outcome dependencies are soft.** `requires_outcome_of` constrains ordering only. A traveller who
   wants only a hotel is never blocked waiting on flights they never mentioned.
 - **Blocking gaps are resolved before sourcing; optional filters never block**, are asked at most once,
-  and are bundled (max 2) alongside the first slate.
+  and are bundled (max 2) alongside the first slate. A blocking obligation may be satisfied in more
+  than one way — `BlockingRule.any_of` is a list of field groups, never a per-field flag — and a
+  present-but-invalid value is reported as `GapReport.invalid`, never as a missing one.
+- **A Requirement Set is immutable and nothing is dropped.** `with_updates` returns a new set; the
+  merge precedence is `USER` > `INFERRED` > `CARRIED_OVER` > `DEFAULT`, later turn wins within a rank,
+  and the losing value is kept in `superseded`. An update naming an undeclared field raises
+  `UnknownFieldError` rather than being ignored — that is what surfaces prompt/schema drift.
+- **Relative dates are resolved before the domain sees them.** F03 accepts only resolved values;
+  "next month" is the interpretation layer's problem, against the `Clock` (F05/F08).
 - **One blocking question per Act.**
 - **The choose-or-refine loop is unbounded** — refinement re-sources the *same* component with an
   incremented `round_index`, and slate history is never discarded.

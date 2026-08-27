@@ -9,7 +9,7 @@ from conftest import SAMPLE_CATALOG, write_catalog
 
 from tourganize.adapters.catalog.yaml import CATALOG_VERSION, YamlComponentCatalog
 from tourganize.domain.errors import UnknownComponentKindError
-from tourganize.platform.errors import CatalogError, ConfigurationError
+from tourganize.platform.errors import CatalogError, ConfigurationError, SchemaError
 
 VALID_KIND = (
     "  - kind_key: alpha\n"
@@ -212,10 +212,13 @@ def test_a_syntax_error_in_the_file_names_the_line(tmp_path: Path) -> None:
     assert "line 3" in str(raised.value)
 
 
-def test_schema_for_is_declared_but_belongs_to_f03(tmp_path: Path) -> None:
+def test_schema_for_is_covered_by_its_own_suite(tmp_path: Path) -> None:
+    """F03 implemented this. What it resolves to, and how it fails, is
+    ``test_yaml_requirement_schemas.py``; all this file asserts is that the catalog reaches it.
+    """
     catalog = catalog_from(SAMPLE_CATALOG, tmp_path)
 
-    with pytest.raises(NotImplementedError) as raised:
+    with pytest.raises(SchemaError) as raised:
         catalog.schema_for("alpha")
 
-    assert "F03" in str(raised.value)
+    assert "alpha.v1.yaml" in str(raised.value)

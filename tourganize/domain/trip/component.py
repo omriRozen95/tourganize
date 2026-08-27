@@ -33,6 +33,7 @@ from typing import Final
 from tourganize.domain.errors import IllegalTransitionError, InvariantViolationError
 from tourganize.domain.invariants import require_text
 from tourganize.domain.options import OptionSlate
+from tourganize.domain.requirements import RequirementSet
 from tourganize.domain.trip.selection import Selection
 
 __all__ = [
@@ -126,13 +127,14 @@ SETTLED_STATUSES: Final = frozenset({ComponentStatus.SELECTED, ComponentStatus.D
 class PlanComponent:
     """One plannable topic instance: its requirements, its slate history, its choice.
 
-    ``requirements`` is deliberately untyped here. F03 introduces the Requirement Set that
-    fills it; until then it is a hole, and nothing in this module looks inside it.
+    ``requirements`` is the Requirement Set F03 introduced. It is ``None`` until the first
+    value arrives, and nothing in this module looks inside it: what is missing from it is
+    ``analyse()``'s question, and merging into it is ``with_updates``'s.
     """
 
     kind_key: str
     status: ComponentStatus = ComponentStatus.PENDING
-    requirements: object | None = None
+    requirements: RequirementSet | None = None
     slates: tuple[OptionSlate, ...] = ()
     selection: Selection | None = None
     mentioned_on_turn: int | None = None

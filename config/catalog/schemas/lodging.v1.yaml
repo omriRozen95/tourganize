@@ -1,0 +1,50 @@
+# The Requirement Schema of the `lodging` Component Kind — data, not code.
+#
+# name                lower_snake_case; the key a Requirement Value is filed under
+# field_kind          which validator reads the value (see domain/requirements/validation.py)
+# obligation          blocking = planning may not start without it; optional = a filter
+# prompt_message_key  what the Message Catalogue (F10) asks this field with
+# constraints         min/max bounds, on integer, score and duration fields only
+#
+# blocking_rules say how an obligation is *satisfied*, and a rule may be satisfied in more
+# than one way: `when` accepts a range, or an explicit check-in and check-out pair. That is
+# the client's own rule — "there should be some time range, if not a specific start and end
+# date" — and it is why blocking is a rule over field groups rather than a flag per field.
+schema_key: lodging.v1
+component_kind: lodging
+fields:
+  - name: place            # where the traveller wants to stay
+    field_kind: place
+    obligation: blocking
+    prompt_message_key: ask.lodging.place
+  - name: date_range
+    field_kind: date_range
+    obligation: blocking
+    prompt_message_key: ask.lodging.date_range
+  - name: check_in
+    field_kind: date
+    obligation: optional
+    prompt_message_key: ask.lodging.check_in
+  - name: check_out
+    field_kind: date
+    obligation: optional
+    prompt_message_key: ask.lodging.check_out
+  - name: guests
+    field_kind: integer
+    obligation: optional
+    prompt_message_key: ask.lodging.guests
+    constraints: {min: 1, max: 12}
+  - name: budget_ceiling
+    field_kind: money
+    obligation: optional
+    prompt_message_key: ask.lodging.budget_ceiling
+  - name: min_review_score
+    field_kind: score
+    obligation: optional
+    prompt_message_key: ask.lodging.min_review_score
+    constraints: {min: 0, max: 10}
+blocking_rules:
+  - name: where
+    any_of: [[place]]
+  - name: when                      # a range, or an explicit pair — either satisfies "when"
+    any_of: [[date_range], [check_in, check_out]]

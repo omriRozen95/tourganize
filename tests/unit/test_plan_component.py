@@ -5,6 +5,14 @@ from __future__ import annotations
 import pytest
 
 from tourganize.domain.errors import IllegalTransitionError, InvariantViolationError
+from tourganize.domain.requirements import (
+    FieldKind,
+    FieldSpec,
+    Obligation,
+    RequirementSchema,
+    RequirementSet,
+    RequirementUpdate,
+)
 from tourganize.domain.trip import LEGAL_TRANSITIONS, ComponentStatus, PlanComponent
 
 S = ComponentStatus
@@ -41,6 +49,23 @@ def test_a_new_component_is_pending_and_knows_nothing() -> None:
     assert fresh.latest_slate() is None
     assert not fresh.is_settled
     assert not fresh.is_mentioned
+
+
+def test_the_typed_hole_f02_left_now_holds_a_requirement_set() -> None:
+    """F03 filled it. Nothing in the component looks inside — it just carries it."""
+    schema = RequirementSchema(
+        "alpha.v1",
+        "alpha",
+        (FieldSpec("place", FieldKind.PLACE, Obligation.BLOCKING, "ask.alpha.place"),),
+    )
+    held = RequirementSet.empty("alpha").with_updates(
+        [RequirementUpdate("place", "Paris")], schema=schema
+    )
+
+    item = PlanComponent(kind_key="alpha", requirements=held)
+
+    assert item.requirements is held
+    assert item.requirements.value_of("place") == "Paris"
 
 
 def test_the_happy_path_is_walkable_end_to_end() -> None:

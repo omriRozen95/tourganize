@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +15,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: a copy written into ``tmp_path`` — is what makes these tests prove that the *shipped* file
 #: loads, which no unit test can.
 SHIPPED_CATALOG = REPO_ROOT / "config" / "catalog" / "components.yaml"
+#: The Requirement Schemas those kinds name. Pointed at for the same reason as the catalog:
+#: only a subprocess reading the *shipped* files can prove the shipped files are sound.
+SHIPPED_SCHEMAS = REPO_ROOT / "config" / "catalog" / "schemas"
 
 
 def _run(*arguments: str, tmp_path: Path, **extra: str) -> subprocess.CompletedProcess[str]:
@@ -23,6 +27,7 @@ def _run(*arguments: str, tmp_path: Path, **extra: str) -> subprocess.CompletedP
         "TOURGANIZE_ENV": "test",
         "TOURGANIZE_CONFIG_DIR": str(tmp_path / "config"),
         "TOURGANIZE_CATALOG_PATH": str(SHIPPED_CATALOG),
+        "TOURGANIZE_SCHEMA_DIR": str(SHIPPED_SCHEMAS),
         "TOURGANIZE_DATA_DIR": str(tmp_path / "var"),
     }
     environment.update(extra)
@@ -34,6 +39,32 @@ def _run(*arguments: str, tmp_path: Path, **extra: str) -> subprocess.CompletedP
         text=True,
         check=False,
     )
+
+
+def _first_shipped_kind() -> str:
+    """The first enabled ``kind_key`` in the shipped catalog, read from the file itself.
+
+    Read rather than written down, so this suite never becomes the place a travel topic is
+    hardcoded — the same rule the package itself lives under.
+    """
+    for line in SHIPPED_CATALOG.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("- kind_key:"):
+            return line.split(":", 1)[1].strip()
+    raise AssertionError(f"{SHIPPED_CATALOG} declares no Component Kinds")
+
+
+def _blocking_values_of(kind_key: str) -> dict[str, object]:
+    """A plausible value for each blocking field of ``kind_key``'s shipped schema."""
+    schema = next(
+        path
+        for path in SHIPPED_SCHEMAS.glob("*.yaml")
+        if f"component_kind: {kind_key}\n" in path.read_text(encoding="utf-8")
+    ).read_text(encoding="utf-8")
+    blocking = re.findall(
+        r"- name: (\w+)[^\n]*\n\s+field_kind: (\w+)\n\s+obligation: blocking", schema
+    )
+    sample: dict[str, object] = {"place": "Paris", "date_range": "2026-10-23/2026-10-28"}
+    return {name: sample.get(kind, sample["place"]) for name, kind in blocking}
 
 
 def test_version(tmp_path: Path) -> None:
@@ -106,11 +137,60 @@ def test_the_shipped_catalog_loads_and_lists_three_kinds(tmp_path: Path) -> None
     assert result.stdout.count("component.") == 3
 
 
-def test_the_shipped_catalog_validates(tmp_path: Path) -> None:
+def test_the_shipped_catalog_and_its_schemas_validate(tmp_path: Path) -> None:
     result = _run("catalog", "validate", tmp_path=tmp_path)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "no problems found" in result.stdout
+    assert "3 Requirement Schemas" in result.stdout
+
+
+def test_the_shipped_schemas_produce_a_gap_report(tmp_path: Path) -> None:
+    """The Definition of Done, run against the files the application actually ships with."""
+    kind = _first_shipped_kind()
+
+    empty = _run("catalog", "gaps", "--kind", kind, tmp_path=tmp_path)
+
+    assert empty.returncode == 0, empty.stdout + empty.stderr
+    assert "is_plannable: false" in empty.stdout
+    assert "ask." in empty.stdout
+
+
+def test_a_gap_report_turns_plannable_once_the_blocking_values_arrive(tmp_path: Path) -> None:
+    kind = _first_shipped_kind()
+    supplied = json.dumps(_blocking_values_of(kind))
+
+    result = _run("catalog", "gaps", "--kind", kind, "--set", supplied, tmp_path=tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "is_plannable: true" in result.stdout
+    assert "blocking (0):" in result.stdout
+
+
+def test_an_unknown_requirement_field_is_refused_rather_than_ignored(tmp_path: Path) -> None:
+    kind = _first_shipped_kind()
+
+    result = _run("catalog", "gaps", "--kind", kind, "--set", '{"nowhere": 1}', tmp_path=tmp_path)
+
+    assert result.returncode == 2
+    assert "nowhere" in result.stderr
+
+
+def test_a_schema_that_contradicts_the_catalog_exits_3(tmp_path: Path) -> None:
+    kind = _first_shipped_kind()
+    elsewhere = tmp_path / "schemas"
+    elsewhere.mkdir()
+    for path in SHIPPED_SCHEMAS.glob("*.yaml"):
+        text = path.read_text(encoding="utf-8")
+        (elsewhere / path.name).write_text(
+            text.replace(f"component_kind: {kind}", "component_kind: elsewhere"), encoding="utf-8"
+        )
+
+    result = _run("catalog", "validate", tmp_path=tmp_path, TOURGANIZE_SCHEMA_DIR=str(elsewhere))
+
+    assert result.returncode == 3
+    assert "elsewhere" in result.stderr
+    assert result.stdout == ""
 
 
 def test_a_catalog_with_a_cycle_exits_3(tmp_path: Path) -> None:

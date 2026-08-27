@@ -57,9 +57,13 @@ jobs:
       - name: Doctor
         run: docker compose --profile dev-cpu run --rm app tourganize doctor
 
-      # The shipped Component Catalog has to load inside the image, not only in a checkout.
-      - name: Validate the shipped catalog
+      # The shipped Component Catalog and its Requirement Schemas have to load inside the
+      # image, not only in a checkout.
+      - name: Validate the shipped catalog and schemas
         run: docker compose --profile dev-cpu run --rm app tourganize catalog validate
+
+      - name: Report the gaps of a shipped Component Kind
+        run: docker compose --profile dev-cpu run --rm app tourganize catalog gaps --kind lodging
 
       - name: Confirm the container runs as a non-root user
         run: docker compose --profile dev-cpu run --rm app id -u | grep -qx 10001

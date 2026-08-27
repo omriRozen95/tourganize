@@ -5,11 +5,10 @@ YAML file reader and an in-memory fake; a database, a remote configuration servi
 generated catalog would all satisfy the same four methods, and nothing above the port would
 notice.
 
-``schema_for`` is declared here but not yet implemented by any adapter. That is deliberate and
-it is a hand-off, not an oversight: F03's Starting state is written as "the ``ComponentCatalog``
-port with ``schema_for()`` declared but unimplemented", so the port's shape is the one F03 was
-promised rather than one that grows a method the moment it is needed. F03 introduces the
-Requirement Schema it returns and narrows the return type from ``object``.
+``schema_for`` completes the port. A Component Kind declares a ``schema_key`` and this is
+where that key becomes a Requirement Schema — a file for the YAML adapter, an object handed in
+for the fake, a row somewhere else. What the *catalog* is and where the *schemas* are are the
+same question as far as a caller is concerned, which is why they are one port and not two.
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from tourganize.domain.catalog import ComponentKind
+from tourganize.domain.requirements import RequirementSchema
 
 __all__ = ["ComponentCatalog"]
 
@@ -52,6 +52,13 @@ class ComponentCatalog(Protocol):
         """
         ...
 
-    def schema_for(self, kind_key: str) -> object:
-        """The Requirement Schema declared by ``kind_key``. Implemented by F03."""
+    def schema_for(self, kind_key: str) -> RequirementSchema:
+        """The Requirement Schema declared by ``kind_key``.
+
+        Raises :class:`~tourganize.domain.errors.UnknownComponentKindError` for a kind the
+        catalog does not declare or has disabled, and
+        :class:`~tourganize.platform.errors.SchemaError` when the schema it names is missing,
+        unreadable, invalid, or describes a different Component Kind. Every adapter caches:
+        a conversation must not see its requirements change underneath it mid-turn.
+        """
         ...

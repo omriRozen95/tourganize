@@ -168,7 +168,7 @@ tourganize/                 # ✔ F01
     diagnostics.py        # ✔ what `tourganize doctor` reports                          (F01)
   language/               # ✔ PromptLibrary, locale detection, MessageCatalogue, bidi   (F08/F10)
   adapters/
-    catalog/              # ✔ yaml/, memory/                                            (F02)
+    catalog/              # ✔ yaml/ (catalog + schemas), memory/                        (F02/F03)
     clock/                # ✔ system/, fake/                                            (F01)
     telemetry/            # ✔ jsonl/, null/                                             (F01)
     options/              # ✔ fixture/, world/, live/                                   (F06, F17, F24)
@@ -186,6 +186,7 @@ services/
   model_tuning/           # own container: LoRA tuning jobs (F23, optional)
 config/                   # ✔ directory exists; contents arrive with the features below
   catalog/components.yaml # ✔ Component Kinds, weights, schemas (data, not code)  (F02)
+  catalog/schemas/        # ✔ one Requirement Schema per schema_key              (F03)
   prompts/<version>/      # versioned Prompt Templates                            (F08)
   messages/<locale>.yaml  # Message Catalogue                                     (F10)
 fixtures/
@@ -197,7 +198,7 @@ tests/                    # ✔ see tests/README.md for the conventions
   unit/ integration/ contracts/ conversations/ architecture/
 ```
 
-**✔ marks what exists today** (after F02); an unmarked directory is created by the feature
+**✔ marks what exists today** (after F03); an unmarked directory is created by the feature
 named beside it, which also fills a marked-but-empty package. F01 created the adapter
 sub-packages up to F07 and no further, so the near shape is visible without inventing folders
 for features nobody has started — an empty package is documentation, not code, and beyond F07
@@ -263,7 +264,7 @@ class LanguageDetector(Protocol):
 class ComponentCatalog(Protocol):
     def kinds(self) -> Sequence[ComponentKind]: ...
     def get(self, kind_key: str) -> ComponentKind: ...
-    def schema_for(self, kind_key: str) -> RequirementSchema: ...
+    def schema_for(self, kind_key: str) -> RequirementSchema: ...        # completed by F03
 
 class PriorityPolicy(Protocol):
     def order(self, candidates: Sequence[ComponentKind], plan: TripPlan) -> Sequence[str]: ...

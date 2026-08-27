@@ -20,6 +20,7 @@ __all__ = [
     "ConfigurationError",
     "ContractViolationError",
     "PortUnavailableError",
+    "SchemaError",
     "TourganizeError",
 ]
 
@@ -47,4 +48,15 @@ class CatalogError(ConfigurationError):
     domain's (``tourganize.domain.catalog.catalog_problems`` finds them), but a file that is
     missing, unreadable or self-contradictory is a misconfigured installation, and callers
     already treat ``ConfigurationError`` as "exit 3, do not start".
+    """
+
+
+class SchemaError(CatalogError):
+    """A Requirement Schema is missing, unreadable, or not a valid schema.
+
+    A *Catalog* error because a Component Kind and the Requirement Schema it names are one
+    declaration split across two files: a kind whose ``schema_key`` resolves to nothing is as
+    broken an installation as a kind with a dangling Outcome Dependency, and both are exit 3.
+    Values that fail a schema are a different thing entirely — those are the traveller's, and
+    they raise ``RequirementValueError`` from the domain instead.
     """

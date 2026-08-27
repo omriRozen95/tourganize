@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Final
 
@@ -41,12 +41,85 @@ kinds:
 """
 
 
+#: The Requirement Schemas of the two *enabled* kinds of :data:`SAMPLE_CATALOG`, keyed by
+#: ``schema_key`` exactly as the file names are. ``alpha.v1`` is the interesting one: it carries
+#: a blocking rule with two candidate groups, which is the shape the client's own "a range, or
+#: a start and an end" rule needs. ``gamma`` is disabled and deliberately has no schema — a
+#: kind nobody can plan does not need one, and `catalog validate` must not ask for it.
+SAMPLE_SCHEMAS: Final[Mapping[str, str]] = {
+    "alpha.v1": """\
+schema_key: alpha.v1
+component_kind: alpha
+fields:
+  - name: place
+    field_kind: place
+    obligation: blocking
+    prompt_message_key: ask.alpha.place
+    example_message_key: example.alpha.place
+  - name: date_range
+    field_kind: date_range
+    obligation: blocking
+    prompt_message_key: ask.alpha.date_range
+  - name: starts_on
+    field_kind: date
+    obligation: optional
+    prompt_message_key: ask.alpha.starts_on
+  - name: ends_on
+    field_kind: date
+    obligation: optional
+    prompt_message_key: ask.alpha.ends_on
+  - name: party_size
+    field_kind: integer
+    obligation: optional
+    prompt_message_key: ask.alpha.party_size
+    constraints: {min: 1, max: 12}
+  - name: budget_ceiling
+    field_kind: money
+    obligation: optional
+    prompt_message_key: ask.alpha.budget_ceiling
+  - name: min_rating
+    field_kind: score
+    obligation: optional
+    prompt_message_key: ask.alpha.min_rating
+    constraints: {min: 0, max: 10}
+blocking_rules:
+  - name: where
+    any_of: [[place]]
+  - name: when
+    any_of: [[date_range], [starts_on, ends_on]]
+""",
+    "beta.v1": """\
+schema_key: beta.v1
+component_kind: beta
+fields:
+  - name: place
+    field_kind: place
+    obligation: blocking
+    prompt_message_key: ask.beta.place
+  - name: comfort
+    field_kind: enum
+    obligation: optional
+    prompt_message_key: ask.beta.comfort
+    enum_values: [basic, standard, premium]
+""",
+}
+
+
 def write_catalog(config_dir: Path, text: str = SAMPLE_CATALOG) -> Path:
     """Write a Component Catalog where ``Settings`` expects to find one, and return its path."""
     path = config_dir / "catalog" / "components.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def write_schemas(config_dir: Path, schemas: Mapping[str, str] = SAMPLE_SCHEMAS) -> Path:
+    """Write Requirement Schemas where ``Settings`` expects them, and return the directory."""
+    directory = config_dir / "catalog" / "schemas"
+    directory.mkdir(parents=True, exist_ok=True)
+    for schema_key, text in schemas.items():
+        (directory / f"{schema_key}.yaml").write_text(text, encoding="utf-8")
+    return directory
 
 
 @pytest.fixture
@@ -78,6 +151,17 @@ def catalog_file(tmp_path: Path) -> Path:
     installation": from F02 on, an installation without a catalog cannot plan anything.
     """
     return write_catalog(tmp_path / "config")
+
+
+@pytest.fixture
+def schema_files(tmp_path: Path) -> Path:
+    """The Requirement Schemas of ``catalog_file``'s enabled kinds, in the same config tree.
+
+    From F03 on, "a healthy installation" means both: a catalog whose kinds name schemas, and
+    the schemas they name. `catalog validate` and `catalog gaps` need this fixture as well as
+    ``catalog_file``; `catalog show` and `doctor` still need only the catalog.
+    """
+    return write_schemas(tmp_path / "config")
 
 
 @pytest.fixture

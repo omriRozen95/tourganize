@@ -1,7 +1,7 @@
 """The ``tourganize`` command line.
 
-Three commands work today: ``--version``, ``doctor`` and ``catalog`` (``show`` and
-``validate``). The rest of the surface is registered as stubs that name the feature which
+Three commands work today: ``--version``, ``doctor`` and ``catalog`` (``show``, ``validate``
+and ``gaps``). The rest of the surface is registered as stubs that name the feature which
 will implement them, so the shape of the finished application is discoverable from the first
 release and no later feature has to invent its own entry point.
 
@@ -10,8 +10,10 @@ Exit codes are part of the contract:
 ===  ==========================================================
 0    success
 1    ``doctor`` found a failing check
-2    the sub-command is registered but not implemented yet, or
-     it needs an action nobody gave it (argparse's own code too)
+2    the invocation was not usable: a sub-command that is
+     registered but not implemented yet, an action nobody gave,
+     or an argument the command cannot act on (argparse's own
+     code for a bad invocation, too)
 3    :class:`~tourganize.platform.errors.ConfigurationError`
 ===  ==========================================================
 """
@@ -19,6 +21,7 @@ Exit codes are part of the contract:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from collections.abc import Mapping, Sequence
@@ -28,22 +31,38 @@ from tourganize import __version__
 from tourganize.application.composition import Container, build_container
 from tourganize.application.diagnostics import run_diagnostics
 from tourganize.domain.catalog import ComponentKind
+from tourganize.domain.errors import UnknownComponentKindError, UnknownFieldError
+from tourganize.domain.requirements import (
+    GapReport,
+    RequirementSchema,
+    RequirementSet,
+    RequirementUpdate,
+    analyse,
+)
 from tourganize.platform.errors import ConfigurationError
 from tourganize.platform.logging import configure_logging
 from tourganize.platform.settings import Settings, unrecognised_keys
+from tourganize.ports.catalog import ComponentCatalog
 
 __all__ = ["main"]
 
 EXIT_OK: Final = 0
 EXIT_DOCTOR_FAILED: Final = 1
 EXIT_NOT_IMPLEMENTED: Final = 2
+#: The same code as ``EXIT_NOT_IMPLEMENTED``, deliberately: argparse owns 2 for "this
+#: invocation was not usable", and an argument the command cannot act on is that, not a
+#: broken installation. Two names because the two situations read nothing like each other at
+#: the call site.
+EXIT_USAGE_ERROR: Final = 2
 EXIT_CONFIGURATION_ERROR: Final = 3
+
+#: The ``catalog`` actions this release implements.
+CATALOG_ACTIONS: Final = ("show", "validate", "gaps")
 
 #: Sub-commands of ``catalog`` that later features implement:
 #: name -> (feature, what that feature delivers). Each entry is deleted from this table by
 #: the feature that implements the command.
 PLANNED_CATALOG_COMMANDS: Final[Mapping[str, tuple[str, str]]] = {
-    "gaps": ("F03", "the Gap Report for a Component Kind"),
     "agenda": ("F04", "the Planning Agenda, with bands and ranks"),
 }
 
@@ -82,7 +101,18 @@ def _add_catalog_parser(subcommands: argparse._SubParsersAction[argparse.Argumen
     catalog = subcommands.add_parser("catalog", help="inspect and validate the Component Catalog")
     actions = catalog.add_subparsers(dest="catalog_command", metavar="action")
     actions.add_parser("show", help="list the declared Component Kinds")
-    actions.add_parser("validate", help="load the catalog and report every problem found")
+    actions.add_parser(
+        "validate", help="load the catalog and its schemas, and report every problem found"
+    )
+    gaps = actions.add_parser("gaps", help="what one Component Kind still needs before planning")
+    gaps.add_argument("--kind", required=True, metavar="KIND_KEY", help="the Component Kind")
+    gaps.add_argument(
+        "--set",
+        dest="values",
+        default=None,
+        metavar="JSON",
+        help='requirement values already known, as a JSON object: \'{"place": "Paris"}\'',
+    )
     for name, (feature, summary) in PLANNED_CATALOG_COMMANDS.items():
         stub = actions.add_parser(name, help=f"[{feature}] {summary}")
         stub.add_argument("rest", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
@@ -144,7 +174,14 @@ def main(
         if command == "doctor":
             return _doctor(settings, env, out=out)
         if command == "catalog":
-            return _catalog(build_container(settings), args.catalog_command, out=out, err=err)
+            return _catalog(
+                build_container(settings),
+                args.catalog_command,
+                kind_key=getattr(args, "kind", ""),
+                values=getattr(args, "values", None),
+                out=out,
+                err=err,
+            )
     except ConfigurationError as exc:
         print(f"configuration error: {exc}", file=err)
         return EXIT_CONFIGURATION_ERROR
@@ -160,22 +197,37 @@ def _doctor(settings: Settings, env: Mapping[str, str], *, out: TextIO) -> int:
     return EXIT_OK if report.ok else EXIT_DOCTOR_FAILED
 
 
-def _catalog(container: Container, action: str | None, *, out: TextIO, err: TextIO) -> int:
-    """``catalog show`` and ``catalog validate``. Both load the catalog for real.
+def _catalog(
+    container: Container,
+    action: str | None,
+    *,
+    kind_key: str,
+    values: str | None,
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """``catalog show``, ``validate`` and ``gaps``. All three load the catalog for real.
 
     The action is checked before the file is read, so ``tourganize catalog`` with no action
     says what it offers rather than reporting whatever is wrong with the catalog.
     """
-    if action not in {"show", "validate"}:
-        print("tourganize catalog needs an action: show, validate", file=err)
+    if action not in CATALOG_ACTIONS:
+        print(f"tourganize catalog needs an action: {', '.join(CATALOG_ACTIONS)}", file=err)
         return EXIT_NOT_IMPLEMENTED
+    if action == "gaps":
+        return _catalog_gaps(container, kind_key=kind_key, values=values, out=out, err=err)
 
     kinds = container.component_catalog.kinds()
     origin = container.settings.catalog_path
     if action == "validate":
+        # Everything is loaded before anything is printed: a run that ends in exit 3 says
+        # nothing on stdout, so a caller can trust that output means "all of it is sound".
+        schemas = _load_every_schema(container.component_catalog)
         enabled = sum(1 for kind in kinds if kind.enabled)
         print(
-            f"{origin}: {len(kinds)} Component Kinds ({enabled} enabled), no problems found",
+            f"{origin}: {len(kinds)} Component Kinds ({enabled} enabled), no problems found\n"
+            f"{container.settings.schema_dir}: {len(schemas)} Requirement Schemas, "
+            f"no problems found",
             file=out,
         )
         return EXIT_OK
@@ -183,9 +235,115 @@ def _catalog(container: Container, action: str | None, *, out: TextIO, err: Text
     return EXIT_OK
 
 
+def _load_every_schema(catalog: ComponentCatalog) -> tuple[RequirementSchema, ...]:
+    """Load the Requirement Schema of every *enabled* kind, raising on the first bad one.
+
+    Enabled only: a disabled kind is not plannable, so requiring it to still carry a schema
+    would make disabling a kind harder than deleting it — which is the opposite of what the
+    ``enabled`` flag is for.
+    """
+    return tuple(catalog.schema_for(kind.kind_key) for kind in catalog.enabled_kinds())
+
+
+def _catalog_gaps(
+    container: Container,
+    *,
+    kind_key: str,
+    values: str | None,
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """``catalog gaps`` — the Gap Report for one Component Kind, with optional known values.
+
+    Everything the dialogue will do with a Gap Report, shown as text: what still blocks
+    planning, what is merely a filter, and what was supplied but cannot be used.
+    """
+    try:
+        schema = container.component_catalog.schema_for(kind_key)
+    except UnknownComponentKindError as exc:
+        print(f"tourganize catalog gaps: {exc}", file=err)
+        return EXIT_USAGE_ERROR
+    try:
+        requirements = _requirements_from(schema, values)
+    except (UnknownFieldError, ValueError) as exc:
+        print(f"tourganize catalog gaps: --set {exc}", file=err)
+        return EXIT_USAGE_ERROR
+    print(_render_gaps(analyse(schema, requirements), schema), file=out)
+    return EXIT_OK
+
+
+def _requirements_from(schema: RequirementSchema, values: str | None) -> RequirementSet:
+    """Read ``--set`` as a JSON object of ``field name -> value``.
+
+    Every value is recorded as coming from the traveller on turn zero, because that is what a
+    value typed at a prompt is. Values that fail their field's validation are kept, not
+    refused: the Gap Report is where they are reported, under ``invalid``.
+    """
+    empty = RequirementSet.empty(schema.component_kind)
+    if values is None:
+        return empty
+    try:
+        supplied = json.loads(values)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"is not valid JSON: {exc}") from exc
+    if not isinstance(supplied, dict):
+        raise ValueError(f"must be a JSON object of field names to values, got {supplied!r}")
+    updates = [
+        RequirementUpdate(field_name=str(name), value=value, raw_text=json.dumps(value))
+        for name, value in supplied.items()
+    ]
+    return empty.with_updates(updates, schema=schema)
+
+
+def _render_gaps(report: GapReport, schema: RequirementSchema) -> str:
+    """Render a Gap Report as three tables and the one line that gates everything."""
+    lines = [
+        f"{report.component_kind} (schema {schema.schema_key})",
+        "",
+        f"is_plannable: {'true' if report.is_plannable else 'false'}",
+        "",
+        f"blocking ({len(report.blocking)}):",
+    ]
+    lines += _indented(
+        _table(
+            ("rule", "satisfied by", "next question"),
+            [
+                (
+                    gap.rule_name,
+                    "  |  ".join(" + ".join(group) for group in gap.field_names),
+                    gap.next_field().prompt_message_key,
+                )
+                for gap in report.blocking
+            ],
+        )
+    )
+    lines += ["", f"optional ({len(report.optional)}):"]
+    lines += _indented(
+        _table(
+            ("field", "kind", "question"),
+            [
+                (spec.name, spec.field_kind.value, spec.prompt_message_key)
+                for spec in report.optional
+            ],
+        )
+    )
+    lines += ["", f"invalid ({len(report.invalid)}):"]
+    lines += _indented(
+        _table(
+            ("field", "reason", "detail"),
+            [(bad.field_name, bad.reason_message_key, bad.detail) for bad in report.invalid],
+        )
+    )
+    return "\n".join(line.rstrip() for line in lines)
+
+
+def _indented(lines: Sequence[str]) -> list[str]:
+    """Indent a rendered table under the heading that introduces it."""
+    return [f"  {line}" if line else line for line in lines]
+
+
 def _render_kinds(kinds: Sequence[ComponentKind], *, origin: str) -> str:
     """Render the catalog as a table, in declaration order — the order F04 ranks ties by."""
-    headers = ("kind_key", "weight", "awaits outcome of", "schema_key", "message_key", "enabled")
     rows = [
         (
             kind.kind_key,
@@ -199,13 +357,25 @@ def _render_kinds(kinds: Sequence[ComponentKind], *, origin: str) -> str:
     ]
     if not rows:
         return f"{origin}\n\nno Component Kinds declared"
+    headers = ("kind_key", "weight", "awaits outcome of", "schema_key", "message_key", "enabled")
+    return "\n".join([origin, "", *_table(headers, rows)])
+
+
+def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
+    """Column-align one table, header rule included. No rows renders as a single dash.
+
+    Trailing padding is trimmed: the last column's width is nobody's business, and a line of
+    invisible spaces is the kind of thing that makes a golden output file hard to diff.
+    """
+    if not rows:
+        return ["-"]
     widths = [max(len(cell) for cell in column) for column in zip(headers, *rows, strict=True)]
-    lines = [f"{origin}", ""]
-    for row in (headers, *rows):
-        lines.append("  ".join(cell.ljust(width) for cell, width in zip(row, widths, strict=True)))
-        if row is headers:
-            lines.append("  ".join("-" * width for width in widths))
-    return "\n".join(line.rstrip() for line in lines)
+
+    def line(cells: Sequence[str]) -> str:
+        return "  ".join(cell.ljust(width) for cell, width in zip(cells, widths, strict=True))
+
+    rule = ["-" * width for width in widths]
+    return [line(headers).rstrip(), line(rule).rstrip(), *(line(row).rstrip() for row in rows)]
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised as a subprocess

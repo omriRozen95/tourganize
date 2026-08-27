@@ -13,6 +13,11 @@ Two deliberate choices:
 * **Unknown keys are refused.** A misspelled ``priorty_weight`` would otherwise be silently
   ignored and the kind would quietly take a default weight. The file is edited by hand, so it
   is read strictly and every problem is reported at once.
+
+Requirement Schemas (F03) are resolved the same way and cached the same way: a Component Kind
+names a ``schema_key``, and the schema is the file of that name under the schema directory.
+Reading one is :mod:`tourganize.adapters.catalog.yaml.yaml_schemas`; deciding *which* one,
+and checking that it agrees with the kind that asked for it, is here.
 """
 
 from __future__ import annotations
@@ -21,12 +26,20 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Final, final
 
+from tourganize.adapters.catalog.yaml.yaml_schemas import load_schema, schema_path
 from tourganize.domain.catalog import ComponentKind, catalog_problems, find_kind, only_enabled
 from tourganize.domain.errors import InvariantViolationError
-from tourganize.platform.errors import CatalogError, ConfigurationError
+from tourganize.domain.requirements import RequirementSchema
+from tourganize.platform.errors import CatalogError, ConfigurationError, SchemaError
 from tourganize.platform.yaml_subset import read_config_file
 
-__all__ = ["CATALOG_VERSION", "YamlComponentCatalog"]
+__all__ = ["CATALOG_VERSION", "SCHEMAS_DIRECTORY_NAME", "YamlComponentCatalog"]
+
+#: Where Requirement Schemas sit relative to the catalog file when nobody says otherwise —
+#: the same directory the documented ``TOURGANIZE_SCHEMA_DIR`` default resolves to. The
+#: Composition Root always passes ``Settings.schema_dir`` explicitly; this is the local
+#: default for a catalog constructed by hand, in a test or at a prompt.
+SCHEMAS_DIRECTORY_NAME: Final = "schemas"
 
 #: The only catalog schema version this release understands. A file declaring anything else
 #: is refused rather than read hopefully: the shape may change, and a silent misreading of a
@@ -51,13 +64,22 @@ _REQUIRED_KIND_KEYS: Final = ("kind_key", "message_key", "priority_weight", "sch
 class YamlComponentCatalog:
     """The Component Catalog declared in ``${TOURGANIZE_CATALOG_PATH}``."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, schema_dir: Path | None = None) -> None:
         self._path = path
+        self._schema_dir = (
+            path.parent / SCHEMAS_DIRECTORY_NAME if schema_dir is None else schema_dir
+        )
         self._kinds: tuple[ComponentKind, ...] | None = None
+        self._schemas: dict[str, RequirementSchema] = {}
 
     @property
     def path(self) -> Path:
         return self._path
+
+    @property
+    def schema_dir(self) -> Path:
+        """The directory Requirement Schemas are read from."""
+        return self._schema_dir
 
     @property
     def origin(self) -> str:
@@ -77,12 +99,32 @@ class YamlComponentCatalog:
     def kind(self, kind_key: str) -> ComponentKind:
         return find_kind(self.kinds(), kind_key, self.origin)
 
-    def schema_for(self, kind_key: str) -> object:
-        """Declared by the port, implemented by F03 — see the port's module docstring."""
-        raise NotImplementedError(
-            "Requirement Schemas arrive with F03; ComponentKind.schema_key names the schema "
-            f"{kind_key!r} will resolve to."
+    def schema_for(self, kind_key: str) -> RequirementSchema:
+        """The Requirement Schema the Component Kind ``kind_key`` declares.
+
+        Cached like the catalog itself, and for the same reason: a conversation must not see
+        its requirements change underneath it mid-turn.
+        """
+        kind = self.kind(kind_key)
+        cached = self._schemas.get(kind.schema_key)
+        if cached is None:
+            cached = self._load_schema(kind)
+            self._schemas[kind.schema_key] = cached
+        return cached
+
+    def _load_schema(self, kind: ComponentKind) -> RequirementSchema:
+        schema = load_schema(
+            schema_path(self._schema_dir, kind.schema_key), expected_key=kind.schema_key
         )
+        if schema.component_kind != kind.kind_key:
+            # Two files, one declaration: the catalog points at the schema and the schema
+            # points back. A disagreement means one of them was edited alone.
+            raise SchemaError(
+                f"{self.origin}: Component Kind {kind.kind_key!r} declares schema "
+                f"{kind.schema_key!r}, but that schema describes "
+                f"{schema.component_kind!r}"
+            )
+        return schema
 
 
 def _load(path: Path) -> tuple[ComponentKind, ...]:

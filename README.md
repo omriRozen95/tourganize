@@ -19,15 +19,16 @@ and finally exports a written plan.
 
 ## Status
 
-**F02 has landed: the planning vocabulary.** On top of F01's foundation — typed settings,
-structured logging, the `Clock` and `TelemetrySink` ports, the Composition Root, `doctor`,
-the container and the import-linter contracts — there is now a Trip Plan made of Plan
-Components, whose *types* are declared as data in
-[`config/catalog/components.yaml`](config/catalog/components.yaml). Flights, lodging and
-ground transport are configuration: a test asserts that grepping `tourganize/` for a shipped
-`kind_key` returns nothing at all. Next is
-[F03](docs/features/F03-requirement-schemas-and-gap-analysis.md), which says what has to be
-known before a component can be planned.
+**F03 has landed: what has to be known before anything can be planned.** On top of F01's
+foundation and F02's Trip Plan, each Component Kind now declares a **Requirement Schema** —
+which fields describe the traveller's wish, which of them block planning and which are only
+filters — as data in [`config/catalog/schemas/`](config/catalog/schemas). Blocking is a rule
+over *groups* of fields, so the client's own case works: a date range **or** an explicit
+check-in and check-out pair satisfies the same obligation. `tourganize catalog gaps` prints
+the resulting **Gap Report**. Flights, lodging and ground transport remain configuration: a
+test asserts that grepping `tourganize/` for a shipped `kind_key` returns nothing at all. Next
+is [F04](docs/features/F04-component-prioritization-policy.md), which decides what to plan
+first.
 
 ## Getting started
 
@@ -37,7 +38,10 @@ pip install -e ".[dev]"
 tourganize --version
 tourganize doctor          # resolved settings, selected adapters, per-port health
 tourganize catalog show    # the declared Component Kinds, weights and dependencies
-tourganize catalog validate # exit 0, or exit 3 naming every problem in the catalog
+tourganize catalog validate # exit 0, or exit 3 naming every problem in the catalog or a schema
+tourganize catalog gaps --kind lodging                      # what is still blocking planning
+tourganize catalog gaps --kind lodging \
+  --set '{"place": "Paris", "date_range": "2026-10-23/2026-10-28"}'   # is_plannable: true
 tourganize chat            # exits 2 until F07 implements it
 ```
 
@@ -70,6 +74,7 @@ secrets redacted, and reports any `TOURGANIZE_*` key it does not recognise.
 | `TOURGANIZE_LOG_FORMAT` | `json` or `human` | `human` in dev, `json` otherwise |
 | `TOURGANIZE_CONFIG_DIR` | Root of `catalog/`, `prompts/`, `messages/` | `./config` |
 | `TOURGANIZE_CATALOG_PATH` | The Component Catalog file | `${TOURGANIZE_CONFIG_DIR}/catalog/components.yaml` |
+| `TOURGANIZE_SCHEMA_DIR` | Directory of Requirement Schema files | `${TOURGANIZE_CONFIG_DIR}/catalog/schemas` |
 | `TOURGANIZE_DATA_DIR` | Writable state (sessions, exports, indexes) | `./var` |
 | `TOURGANIZE_SECRETS_FILE` | Optional `KEY=value` file, merged *under* the environment | unset |
 | `TOURGANIZE_TELEMETRY_SINK` | `null` or `jsonl` | `jsonl` |

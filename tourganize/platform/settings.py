@@ -15,15 +15,17 @@ way of loading configuration.
 | ``TOURGANIZE_LOG_FORMAT`` | ``json`` or ``human`` | ``human`` in dev, ``json`` otherwise |
 | ``TOURGANIZE_CONFIG_DIR`` | Root of ``catalog/``, ``prompts/``, ``messages/`` | ``config`` |
 | ``TOURGANIZE_CATALOG_PATH`` | Component Catalog file | ``$CONFIG_DIR/catalog/components.yaml`` |
+| ``TOURGANIZE_SCHEMA_DIR`` | Requirement Schema files | ``$CONFIG_DIR/catalog/schemas`` |
 | ``TOURGANIZE_DATA_DIR`` | Writable state (sessions, exports, indexes) | ``var`` |
 | ``TOURGANIZE_SECRETS_FILE`` | Optional ``KEY=value`` file merged *under* the environment | unset |
 | ``TOURGANIZE_TELEMETRY_SINK`` | ``null`` or ``jsonl`` | ``jsonl`` |
 | ``TOURGANIZE_TELEMETRY_PATH`` | Where the JSONL sink writes | ``$DATA_DIR/telemetry.jsonl`` |
 
-Three keys are worth a word on. ``TOURGANIZE_CATALOG_PATH`` follows ``TOURGANIZE_CONFIG_DIR``
-unless it is set explicitly, so moving the configuration directory moves the catalog with it;
-a catalog that is not *there* is not an error here, because a missing file is a runtime
-condition that ``doctor`` reports and the command that needs it refuses.
+Three keys are worth a word on. ``TOURGANIZE_CATALOG_PATH`` and ``TOURGANIZE_SCHEMA_DIR``
+follow ``TOURGANIZE_CONFIG_DIR`` unless they are set explicitly, so moving the configuration
+directory moves the catalog and its Requirement Schemas with it; a catalog or a schema that is
+not *there* is not an error here, because a missing file is a runtime condition that
+``doctor`` reports and the command that needs it refuses.
 ``TOURGANIZE_TELEMETRY_PATH`` defaults to its documented value whichever sink is selected —
 the ``null`` sink simply never writes there — so nothing downstream has to re-derive it. And a
 secrets file may only set ``TOURGANIZE_*`` keys: a stray key is refused rather than ignored,
@@ -50,6 +52,7 @@ __all__ = [
     "Settings",
     "TelemetrySinkName",
     "default_catalog_path",
+    "default_schema_dir",
     "default_telemetry_path",
     "unrecognised_keys",
 ]
@@ -69,6 +72,7 @@ DEFAULT_DATA_DIR: Final = Path("var")
 DEFAULT_LOG_LEVEL: Final = "INFO"
 TELEMETRY_FILENAME: Final = "telemetry.jsonl"
 CATALOG_RELATIVE_PATH: Final = Path("catalog") / "components.yaml"
+SCHEMAS_RELATIVE_PATH: Final = Path("catalog") / "schemas"
 
 #: A ``TOURGANIZE_*`` key ending in one of these is treated as a secret: it is wrapped in
 #: :class:`SecretValue` and never rendered by ``doctor`` or the logs.
@@ -92,6 +96,7 @@ KNOWN_KEYS: Final = frozenset(
         "TOURGANIZE_LOG_FORMAT",
         "TOURGANIZE_CONFIG_DIR",
         "TOURGANIZE_CATALOG_PATH",
+        "TOURGANIZE_SCHEMA_DIR",
         "TOURGANIZE_DATA_DIR",
         "TOURGANIZE_SECRETS_FILE",
         "TOURGANIZE_TELEMETRY_SINK",
@@ -109,6 +114,7 @@ class Settings:
     log_format: LogFormat
     config_dir: Path
     catalog_path: Path
+    schema_dir: Path
     data_dir: Path
     telemetry_sink: TelemetrySinkName
     telemetry_path: Path | None
@@ -136,6 +142,7 @@ class Settings:
             catalog_path=_required_file(
                 merged, "TOURGANIZE_CATALOG_PATH", default_catalog_path(config_dir)
             ),
+            schema_dir=_directory(merged, "TOURGANIZE_SCHEMA_DIR", default_schema_dir(config_dir)),
             data_dir=data_dir,
             telemetry_sink=sink,
             telemetry_path=_file(
@@ -157,6 +164,7 @@ class Settings:
             "log_format": self.log_format,
             "config_dir": str(self.config_dir),
             "catalog_path": str(self.catalog_path),
+            "schema_dir": str(self.schema_dir),
             "data_dir": str(self.data_dir),
             "telemetry_sink": self.telemetry_sink,
             "telemetry_path": "unset" if self.telemetry_path is None else str(self.telemetry_path),
@@ -178,6 +186,11 @@ def default_telemetry_path(data_dir: Path) -> Path:
 def default_catalog_path(config_dir: Path) -> Path:
     """Where the Component Catalog lives unless ``TOURGANIZE_CATALOG_PATH`` says otherwise."""
     return config_dir / CATALOG_RELATIVE_PATH
+
+
+def default_schema_dir(config_dir: Path) -> Path:
+    """Where Requirement Schemas live unless ``TOURGANIZE_SCHEMA_DIR`` says otherwise."""
+    return config_dir / SCHEMAS_RELATIVE_PATH
 
 
 def unrecognised_keys(environ: Mapping[str, str]) -> tuple[str, ...]:

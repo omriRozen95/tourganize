@@ -39,11 +39,16 @@ differ from the real adapter's.** Same fields, same errors, same ordering guaran
 - `catalog_file` — a valid Component Catalog inside the config directory `settings_factory`
   points at. Requesting it is how a test says "a healthy installation": from F02 on, an
   installation with no catalog fails `doctor`.
+- `schema_files` — the Requirement Schemas of that catalog's *enabled* kinds, in the same
+  config tree. From F03 on, `catalog validate` and `catalog gaps` need both fixtures; `catalog
+  show` and `doctor` still need only the catalog. The disabled kind deliberately has no
+  schema — a kind nobody can plan does not need one.
 - `option_factory(option_id, kind_key="alpha", *, price=None, **facts)` — a `PlanOption` with
   plausible Provenance, so a test names only what it is about.
-- `write_catalog(config_dir, text=SAMPLE_CATALOG)` and `SAMPLE_CATALOG` are plain functions,
-  imported as `from conftest import write_catalog` by the few tests that need a *broken*
-  catalog. `tests` is on `pythonpath` in `pyproject.toml` so that import does not depend on
+- `write_catalog(config_dir, text=SAMPLE_CATALOG)`, `write_schemas(config_dir,
+  schemas=SAMPLE_SCHEMAS)` and their sample constants are plain functions, imported as
+  `from conftest import write_catalog` by the tests that need a *broken* catalog or schema.
+  `tests` is on `pythonpath` in `pyproject.toml` so that import does not depend on
   pytest's import mode; the same mechanism is what lets `tests/architecture` import
   `boundaries`.
 
