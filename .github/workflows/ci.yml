@@ -26,24 +26,35 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install
+        id: install
         run: pip install -e ".[dev]"
 
+      # `if: !cancelled()` on every gate below: they are independent, so one run reports all
+      # four verdicts instead of stopping at the first. The job still fails if any of them
+      # did. `scripts/check` is the same idea locally, in parallel.
       - name: Lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: ruff check .
 
       - name: Format
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: ruff format --check .
 
       - name: Types
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: mypy --strict tourganize
 
       # The architectural gate. A failure here is a design regression, not a lint nit:
       # see docs/architecture/decisions.md before touching a contract.
       - name: Import boundaries
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: lint-imports
 
+      # Coverage is asked for here rather than in `addopts`, so that the edit/check loop
+      # does not pay for instrumentation nothing gates on.
       - name: Tests
-        run: pytest
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pytest --cov=tourganize --cov-report=term-missing
 
   container:
     name: build the app image and run doctor in it

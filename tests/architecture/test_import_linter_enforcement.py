@@ -12,6 +12,11 @@ import subprocess
 import pytest
 from boundaries import REPO_ROOT, planted_violation
 
+#: These tests plant a file in the real ``tourganize/`` tree and read it back, so they may
+#: never run beside each other on two workers. One group name keeps the whole directory on a
+#: single xdist worker; without ``-n`` the marker does nothing at all.
+pytestmark = pytest.mark.xdist_group("repo_tree")
+
 EXECUTABLE = shutil.which("lint-imports")
 requires_import_linter = pytest.mark.skipif(
     EXECUTABLE is None, reason="import-linter is not installed"

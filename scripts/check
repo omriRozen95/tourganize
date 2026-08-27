@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Run every gate at once, and report all of them.
+#
+# ruff, mypy, lint-imports and pytest are independent: nothing one of them reads is written
+# by another. Run serially they cost four round-trips to learn four verdicts, and the loop
+# stops at the first failure, so a run that would have failed lint *and* types tells you
+# about one of them. Run together they cost one round-trip and tell you everything.
+#
+#   scripts/check                       every gate, full suite
+#   scripts/check --cov                 …with the coverage report CI prints
+#   scripts/check tests/unit/test_x.py  …with pytest narrowed; the other gates still run
+#   scripts/check -- -k slate -x        …everything after -- goes to pytest
+#
+# Exit status is 0 only when every gate passed.
+set -uo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
+
+# The enforcement test in tests/architecture/ skips unless `lint-imports` is on PATH — the
+# one test that proves the boundary gate rejects a planted violation. A checkout with a
+# .venv gets it for free rather than silently losing the test.
+if [ -x .venv/bin/python ] && [[ ":$PATH:" != *":$PWD/.venv/bin:"* ]]; then
+  PATH="$PWD/.venv/bin:$PATH"
+  export PATH
+fi
+
+coverage=0
+pytest_args=()
+for arg in "$@"; do
+  case "$arg" in
+    --cov) coverage=1 ;;
+    --help | -h)
+      awk 'NR > 1 { if (!/^#/) exit; print substr($0, 3) }' "${BASH_SOURCE[0]}"
+      exit 0
+      ;;
+    --) ;;
+    *) pytest_args+=("$arg") ;;
+  esac
+done
+
+pytest_cmd=(pytest -q)
+if [ "$coverage" = 1 ]; then
+  pytest_cmd+=(--cov=tourganize --cov-report=term-missing)
+fi
+# Distribute only a whole-suite run: on a single file the worker startup costs more than the
+# tests do. --dist loadgroup honours the xdist_group marker on tests/architecture/, which
+# plants a file in the real tree and must therefore stay on one worker.
+if [ ${#pytest_args[@]} -eq 0 ] && python -c "import xdist" 2>/dev/null; then
+  pytest_cmd+=(-n auto --dist loadgroup)
+fi
+pytest_cmd+=("${pytest_args[@]}")
+
+out=$(mktemp -d)
+trap 'rm -rf "$out"' EXIT
+
+names=(lint types imports tests)
+declare -A commands=(
+  [lint]="ruff check . && ruff format --check ."
+  [types]="mypy --strict tourganize"
+  [imports]="lint-imports"
+  [tests]="$(printf '%q ' "${pytest_cmd[@]}")"
+)
+
+for name in "${names[@]}"; do
+  {
+    start=${EPOCHREALTIME/[.,]/}
+    eval "${commands[$name]}" >"$out/$name.log" 2>&1
+    code=$?
+    end=${EPOCHREALTIME/[.,]/}
+    echo "$code $(( (end - start) / 1000 ))" >"$out/$name.status"
+  } &
+done
+wait
+
+failed=()
+printf '\n'
+for name in "${names[@]}"; do
+  read -r code elapsed <"$out/$name.status"
+  if [ "$code" = 0 ]; then
+    printf '  %-8s PASS  %5sms\n' "$name" "$elapsed"
+  else
+    printf '  %-8s FAIL  %5sms  (exit %s)\n' "$name" "$elapsed" "$code"
+    failed+=("$name")
+  fi
+done
+
+for name in "${failed[@]}"; do
+  printf '\n──── %s: %s\n' "$name" "${commands[$name]}"
+  cat "$out/$name.log"
+done
+
+if [ ${#failed[@]} -eq 0 ]; then
+  printf '\nAll gates passed.\n'
+  exit 0
+fi
+printf '\nFailed: %s\n' "${failed[*]}"
+exit 1

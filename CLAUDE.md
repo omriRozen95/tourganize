@@ -86,8 +86,21 @@ that heading by prefix, not exactly.
 
 ### Code gates (all four run in CI, on 3.11 and 3.12)
 
+**Run them with `scripts/check`, not one at a time.** They are independent, so one command runs all
+four concurrently and reports every verdict; run serially they cost four round-trips and stop at the
+first failure.
+
 ```bash
 pip install -e ".[dev]"
+scripts/check                             # lint, types, imports, tests — parallel, all verdicts
+scripts/check tests/unit/test_agenda.py   # pytest narrowed; the other three gates still run
+scripts/check --cov                       # …plus the coverage report CI prints
+```
+
+Coverage is deliberately not in `addopts` — nothing gates on it and it roughly doubles a single-file
+run. Do not put it back. The gates individually, when you need one alone:
+
+```bash
 ruff check . && ruff format --check .     # lint + format
 mypy --strict tourganize                  # type gate
 lint-imports                              # import-linter: the DDD boundary enforcement
@@ -103,7 +116,12 @@ docker compose --profile dev-cpu run --rm app tourganize doctor
 ```
 
 `lint-imports` must be on `PATH` for `tests/architecture/test_import_linter_enforcement.py` to run
-rather than skip — that is the test which proves the gate rejects a planted violation.
+rather than skip — that is the test which proves the gate rejects a planted violation. `scripts/check`
+puts `.venv/bin` on `PATH` for exactly that reason.
+
+`tests/architecture/` plants a file in the real `tourganize/` tree, so its three modules carry
+`pytestmark = pytest.mark.xdist_group("repo_tree")`: under `pytest -n` they must stay on one worker.
+A new test that writes into the package tree needs the same marker.
 
 `lint-imports` is not optional tooling — it is the mechanism that keeps the domain dependency-free.
 If a contract has to be weakened to make a feature compile, that needs an ADR entry, not a config

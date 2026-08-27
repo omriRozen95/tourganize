@@ -27,6 +27,7 @@ dependencies = []
 dev = [
   "pytest>=8.0",
   "pytest-cov>=5.0",
+  "pytest-xdist>=3.6",
   "ruff>=0.6",
   "mypy>=1.11",
   "import-linter>=2.0",
@@ -80,7 +81,16 @@ testpaths = ["tests"]
 # `tests` is on the path so that a test module can import the shared helpers next to it
 # (`conftest.write_catalog`, `boundaries`) without depending on pytest's import mode.
 pythonpath = [".", "tests"]
-addopts = "-ra --strict-markers --cov=tourganize --cov-report=term-missing"
+# Coverage is deliberately *not* here. It is instrumentation, nothing gates on it
+# (there is no --cov-fail-under), and it roughly doubles the cost of the single-file runs
+# that dominate an edit/check loop. CI and `scripts/check --cov` ask for it explicitly.
+addopts = "-ra --strict-markers"
+markers = [
+  # Registered here, not only by pytest-xdist, so that --strict-markers still passes in an
+  # environment that installed pytest without it. tests/architecture/ carries the marker
+  # because those tests plant a file in the real tree: see scripts/check.
+  "xdist_group: pin a test to one xdist worker, by group name",
+]
 
 [tool.coverage.run]
 branch = true
