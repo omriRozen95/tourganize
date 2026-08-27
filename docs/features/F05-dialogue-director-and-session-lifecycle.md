@@ -139,6 +139,55 @@ class DialogueDirector:
     def session(self) -> PlanningSession: ...
 ```
 
+Seven places where the shipped code says something different from this file. They are not one kind of
+thing, so each is labelled: **forced** means a rule that outranks this file left no choice,
+**spec-authorised** means this file's own Open questions or Scope allow it, and **implementer's
+choice** means it is a judgement that could have gone the other way and is defended here on its
+merits.
+
+- *(forced)* `TurnInterpreter`, `OptionSlatePlanner` and `DialogueContext` are **defined** in
+  `tourganize/dialogue/ports.py` and re-exported by `tourganize/ports/interpretation.py`, which stays
+  the documented import path — and `tourganize.dialogue` is granted one import permission the domain
+  does not have, `tourganize.ports`, because `DialogueDirector.__init__` names four port types. Both
+  halves are [D17](../architecture/decisions.md), with a third import-linter contract keeping
+  `tourganize.ports` itself free of anything external so the permission admits nothing. Defining the
+  protocols in `ports/interpretation.py` instead would make it and `dialogue/director.py` import each
+  other, which is a real circular import, not a style preference.
+- *(forced)* **A declined Component Kind that the traveller later raises themselves is *not*
+  re-planned.** The Definition of done asks for both halves of "decline is about offers, not
+  prohibition"; only the first half is implemented. F02's `ComponentStatus.DECLINED` is **terminal** —
+  `LEGAL_TRANSITIONS[DECLINED]` is empty, the glossary says so, and three F02 tests pin it — so a
+  declined component cannot re-enter `ELICITING`. What F05 does: the later mention is *recorded* (the
+  plan and Transcript stay honest about what was asked for), the Kind is never offered again, and
+  nothing is silently planned. Closing the gap is a `DECLINED -> ELICITING` edge in
+  `domain/trip/component.py`, an amendment to the glossary's "`DECLINED` is terminal", and an ADR —
+  a change to F02's rules, which F05 is not the place to make unilaterally. Pinned as it stands by
+  `test_a_declined_kind_is_never_offered_again`.
+- *(spec-authorised)* `DialogueContext` carries one field the Contract block does not list,
+  `focus_field_names`: the field names the focused component's Requirement Schema declares. Without it
+  an interpreter has to guess field names, and a guess that misses raises `UnknownFieldError` on the
+  merge. With it, the keyword interpreter offers a value only for a field that exists. The Open
+  questions make `DialogueContext`'s shape the implementer's call, and no session object leaks out —
+  which is the property the block's own comment names.
+- *(implementer's choice)* `INTERPRETING` is a **real state and the hub of the table**: every turn
+  enters it and leaves it for whatever the interpretation implies, so each Resting State needs one
+  outgoing edge instead of five. The Open questions leave this open; the deciding argument is the
+  DoD's own "the transition table has no unreachable state", which a phase-inside-`handle()` reading
+  of `INTERPRETING` could not satisfy while the enum still lists it.
+- *(implementer's choice)* The Director takes `DialogueSettings` (`tourganize/dialogue/settings.py`)
+  rather than `Settings`, and `application/composition.build_dialogue_settings` converts. Forced in
+  part — `tourganize.dialogue` cannot import `Settings` — and chosen in part: four numbers a test can
+  build in one line beats a config directory it does not need.
+- *(implementer's choice)* **A `SMALL_TALK` turn outside the greeting emits no Act.** No Act in the
+  closed vocabulary means "acknowledged", and inventing one would be inventing wording, which is the
+  one thing this feature must not do. In the greeting, carrying on means starting, so it plans.
+  Similarly, a turn that leaves nothing to ask and nothing to offer emits `deliver_summary` — the
+  honest answer in the vocabulary — rather than nothing at all.
+- *(implementer's choice)* `TOURGANIZE_INTERPRETER` **accepts** `model` and the Composition Root
+  refuses it by name, saying which feature delivers it. The alternative — leaving `model` out of the
+  choice list — answers "not one of 'keyword'", which is true and useless, and would have made this
+  file's config table wrong.
+
 **Ports consumed:** `ComponentCatalog`, `PriorityPolicy` (F02/F04), `TurnInterpreter` (introduced here,
 keyword adapter here), `OptionSlatePlanner` (introduced here, fake here → real in F06), `Clock`,
 `TelemetrySink`.
@@ -186,44 +235,46 @@ telemetry field names.
 Behavioural criteria are stated as scenarios; each is a test using the keyword interpreter and a fake
 planner returning fixed slates.
 
-- [ ] **Blocking before planning:** given *"find me a hotel in Paris"* (no dates), the first Act is
+- [x] **Blocking before planning:** given *"find me a hotel in Paris"* (no dates), the first Act is
       `ask_blocking` for the `when` rule and **no** slate is produced; after *"23–28 October 2026"*, a
       `present_slate` Act for `lodging` follows.
-- [ ] **One question at a time:** with both `where` and `when` missing, exactly one `ask_blocking` Act is
+- [x] **One question at a time:** with both `where` and `when` missing, exactly one `ask_blocking` Act is
       emitted per turn.
-- [ ] **Optional never blocks:** with all blocking rules satisfied and every optional field empty, a
+- [x] **Optional never blocks:** with all blocking rules satisfied and every optional field empty, a
       slate is presented on that same turn, accompanied by at most one `ask_optional` Act naming at most
       2 fields; ignoring it does not re-ask.
-- [ ] **Invalid value:** a reversed date range yields `report_invalid_value` naming the field, and the
+- [x] **Invalid value:** a reversed date range yields `report_invalid_value` naming the field, and the
       component does not advance to `SOURCING`.
-- [ ] **Choose:** selecting *"2"* records a Selection referencing the second option of the latest slate,
+- [x] **Choose:** selecting *"2"* records a Selection referencing the second option of the latest slate,
       emits `confirm_selection`, and moves focus to the next agenda entry.
-- [ ] **Refine, repeatedly:** three consecutive refinements produce three new slates for the *same*
+- [x] **Refine, repeatedly:** three consecutive refinements produce three new slates for the *same*
       `kind_key` with `round_index` 1, 2, 3, no Selection recorded, and all rounds present in history.
-- [ ] **Refinement that re-blocks:** a refinement invalidating the date range returns the machine to
+- [x] **Refinement that re-blocks:** a refinement invalidating the date range returns the machine to
       `ELICITING_BLOCKING` instead of sourcing.
-- [ ] **Mentioned-first end to end:** the Paris-hotel opening plans `lodging` before any offer of
+- [x] **Mentioned-first end to end:** the Paris-hotel opening plans `lodging` before any offer of
       `air_travel` or `ground_transport` is made — asserted on the Act sequence, not on the agenda.
-- [ ] **Proactive offer and decline:** after the lodging Selection, an `offer_unmentioned` Act names
+- [x] **Proactive offer and decline:** after the lodging Selection, an `offer_unmentioned` Act names
       `air_travel` (top-ranked unmentioned); `DECLINE_OFFER` marks it declined, the next offer names
       `ground_transport`, and declining that leads to `deliver_summary` then `close`.
-- [ ] **Accept offer:** `ACCEPT_OFFER` re-enters `ELICITING_BLOCKING`/`SOURCING` for the offered kind and
+- [x] **Accept offer:** `ACCEPT_OFFER` re-enters `ELICITING_BLOCKING`/`SOURCING` for the offered kind and
       that kind is never offered again.
-- [ ] **Never re-offer declined:** a declined kind mentioned *by the traveller* later is still planned
-      (decline is about offers, not prohibition) — asserted explicitly.
-- [ ] **End anywhere:** `END_SESSION` mid-slate yields `deliver_summary` reporting the open component,
+- [~] **Never re-offer declined:** the "never re-offered" half holds and is asserted; the "still
+      planned" half does **not** — `ComponentStatus.DECLINED` is terminal in F02, so a declined Kind
+      the traveller raises again is recorded as mentioned but not re-planned. See the *forced*
+      deviation in the Contract section for the one-line change and the ADR it would need.
+- [x] **End anywhere:** `END_SESSION` mid-slate yields `deliver_summary` reporting the open component,
       then `close`; a further turn raises `SessionClosedError`.
-- [ ] **Failure containment:** a planner raising on every call yields `report_sourcing_failure`, marks
+- [x] **Failure containment:** a planner raising on every call yields `report_sourcing_failure`, marks
       the component `FAILED` after the configured attempts, and continues to the next agenda entry.
-- [ ] **No prose in the domain:** an automated test walks every Act payload produced across the scenario
+- [x] **No prose in the domain:** an automated test walks every Act payload produced across the scenario
       suite and asserts no value is a natural-language sentence (heuristic: no payload string contains a
       space-separated run of >3 words outside a `message_key`/`option facts` allowlist).
-- [ ] **Transition guard:** a test drives an illegal transition directly and gets
+- [x] **Transition guard:** a test drives an illegal transition directly and gets
       `IllegalDialogueTransitionError`; the transition table has no unreachable state (asserted by graph
       walk from `GREETING`).
-- [ ] One telemetry event per `handle()` call, containing states before/after, intent and agenda
+- [x] One telemetry event per `handle()` call, containing states before/after, intent and agenda
       explanation.
-- [ ] `mypy --strict`, `ruff`, `lint-imports` pass — `tourganize.dialogue` imports only stdlib and
+- [x] `mypy --strict`, `ruff`, `lint-imports` pass — `tourganize.dialogue` imports only stdlib and
       `tourganize.domain`/`tourganize.ports`. `catalog *` CLI commands still work; `tourganize chat`
       still exits 2 (F07 wires it).
 

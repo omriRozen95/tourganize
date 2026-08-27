@@ -1,15 +1,21 @@
 """An AST reading of the import rules, so they hold even without import-linter installed.
 
-The contracts here are the same four in ``[tool.importlinter]`` in ``pyproject.toml``. Two
+The contracts here are the same five in ``[tool.importlinter]`` in ``pyproject.toml``. Two
 checks of one rule is deliberate duplication: import-linter is the gate that fails CI, and
 this module is what still fails when someone removes the tool from the dev extras.
+
+:data:`ALLOWED_IMPORTS` is the interesting one. The domain may reach only itself and the
+dialogue; the dialogue may also reach ``tourganize.ports`` (D17), and the ports may reach both
+pure packages, because a port's contract is typed with their value objects. Nothing in any of
+the three may reach the platform, an adapter or a third-party library, which is what makes the
+dialogue's extra permission mean nothing more than it says.
 """
 
 from __future__ import annotations
 
 import ast
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +31,14 @@ PURE_PACKAGES: Final = ("tourganize.domain", "tourganize.dialogue")
 ADAPTERS_PACKAGE: Final = "tourganize.adapters"
 ADAPTER_IMPORTERS: Final = ("tourganize.application.composition",)
 PORTS_PACKAGE: Final = "tourganize.ports"
+
+#: Which ``tourganize.*`` packages each dependency-free package may import, by prefix. Anything
+#: outside the standard library and its own row is a violation.
+ALLOWED_IMPORTS: Final[Mapping[str, tuple[str, ...]]] = {
+    "tourganize.domain": ("tourganize.domain", "tourganize.dialogue"),
+    "tourganize.dialogue": ("tourganize.domain", "tourganize.dialogue", "tourganize.ports"),
+    "tourganize.ports": ("tourganize.domain", "tourganize.dialogue", "tourganize.ports"),
+}
 
 PROBE_MODULE: Final = "_boundary_probe"
 PROBE_SOURCE: Final = '''"""A deliberate violation, planted by a test and removed again."""
@@ -99,8 +113,16 @@ def _adapter_area(module: str) -> str | None:
     return module[len(prefix) :].split(".")[0]
 
 
+def allowance_for(module: str) -> tuple[str, ...] | None:
+    """What ``module`` may import, or ``None`` when it is not one of the constrained packages."""
+    for package in sorted(ALLOWED_IMPORTS, key=len, reverse=True):
+        if module == package or module.startswith(f"{package}."):
+            return ALLOWED_IMPORTS[package]
+    return None
+
+
 def find_violations() -> tuple[str, ...]:
-    """Return a human-readable line per import that breaks one of the four contracts."""
+    """Return a human-readable line per import that breaks one of the five contracts."""
     violations: list[str] = []
     for name, path in iter_modules():
         for edge in imports_of(name, path):
@@ -113,12 +135,12 @@ def judge(edge: ImportEdge) -> list[str]:
     found: list[str] = []
     imported = edge.imported
 
-    if (
-        edge.importer.startswith(PURE_PACKAGES)
-        and not _is_stdlib(imported)
-        and not imported.startswith(PURE_PACKAGES)
-    ):
-        found.append(f"the domain must import only the standard library: {edge}")
+    allowed = allowance_for(edge.importer)
+    if allowed is not None and not _is_stdlib(imported) and not imported.startswith(allowed):
+        found.append(
+            f"{edge.importer.split('.')[1]} must import only the standard library and "
+            f"{', '.join(allowed)}: {edge}"
+        )
 
     if edge.importer.startswith(PORTS_PACKAGE) and imported.startswith(ADAPTERS_PACKAGE):
         found.append(f"a port must not import an adapter: {edge}")

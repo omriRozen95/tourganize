@@ -1,0 +1,50 @@
+# The keyword Turn Interpreter's phrase table for English — configuration, not code.
+#
+# This file is why `tourganize/` can name no travel topic: "a hotel is a lodging" is exactly
+# such a naming, so it lives here, next to the Component Catalog that declares the kinds.
+# It is also deliberately small. The keyword interpreter is a *stand-in* (F05 scope item 9);
+# F08 replaces it with an Extraction Call against a schema, and a phrase table that grew into
+# a grammar would be scaffolding nobody ever replaced.
+#
+# locale            the Locale Tag this table is for; must match the file name
+# intents           Turn Intent -> the phrases that mean it (whole-word, case-insensitive)
+# kinds             kind_key -> the words that raise that Component Kind
+# fields            value shape -> the Requirement Schema field name it is filed under
+# place_markers     words after which a capitalised (or Hebrew) word is read as a place
+# range_separators  what may sit between the two ends of a date range
+# months            month name -> month number, for "23-28 October 2026"
+locale: en
+
+intents:
+  end_session: [goodbye, bye, "that is all", "that's all", "we are done", "i am done", "no more"]
+  state_request: ["where are we", "what do we have", "what is the plan", "so far", status]
+  accept_offer: ["yes please", yes, sure, "go ahead", "sounds good", ok, okay]
+  decline_offer: ["no thanks", "no thank you", no, skip, "not interested", "leave it", nope]
+  refine: [cheaper, "too expensive", closer, instead, actually, "something else", different, other]
+  small_talk: [hello, hi, hey, "good morning", "good evening", thanks, "thank you"]
+
+kinds:
+  air_travel: [flight, flights, fly, flying, plane, airline, airfare]
+  lodging: [hotel, hotels, hostel, room, rooms, stay, accommodation, apartment]
+  ground_transport: [car, "car hire", "car rental", taxi, transfer, train, bus, shuttle]
+
+fields:
+  place: place
+  date_range: date_range
+
+place_markers: [in, to, at, near, around]
+range_separators: ["/", "-", "--", "–", "—", to, until, through]
+
+months:
+  january: 1
+  february: 2
+  march: 3
+  april: 4
+  may: 5
+  june: 6
+  july: 7
+  august: 8
+  september: 9
+  october: 10
+  november: 11
+  december: 12

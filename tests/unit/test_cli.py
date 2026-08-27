@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from conftest import write_catalog, write_schemas
+from conftest import write_catalog, write_keywords, write_schemas
 
 from tourganize import __version__
 from tourganize.cli import (
@@ -30,9 +30,10 @@ def _run(argv: list[str], environ: Mapping[str, str] | None = None) -> tuple[int
 
 
 def _environ(tmp_path: Path, **extra: str) -> dict[str, str]:
-    """A healthy installation in ``tmp_path``: Component Catalog and Requirement Schemas."""
+    """A healthy installation in ``tmp_path``: catalog, schemas and keyword phrase tables."""
     write_catalog(tmp_path / "config")
     write_schemas(tmp_path / "config")
+    write_keywords(tmp_path / "config")
     environ = {
         "TOURGANIZE_ENV": "test",
         "TOURGANIZE_CONFIG_DIR": str(tmp_path / "config"),

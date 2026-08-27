@@ -1,0 +1,44 @@
+# The keyword Turn Interpreter's phrase table for Hebrew.
+#
+# Hebrew is a first-class *content* language, and this file is where that starts: a turn written
+# in the Hebrew block is read against this table rather than the English one.
+#
+# Two honest limitations of the keyword stand-in, both of which F08 fixes rather than this file:
+# Hebrew prepositions are written as prefixes (בפריז, "in Paris"), so `place_markers` — which
+# match whole words — rarely fire, and for the same reason a spelled-out month (באוקטובר) is not
+# recognised. An ISO-8601 range (2026-10-23/2026-10-28) is read here exactly as it is in English.
+locale: he
+
+intents:
+  end_session: [להתראות, ביי, "זה הכל", "סיימתי", "תודה וסיימתי"]
+  state_request: ["מה יש לנו", "איפה אנחנו", "מה התוכנית", "עד כה"]
+  accept_offer: [כן, בבקשה, "כן בבקשה", בטח, אישור, סבבה]
+  decline_offer: [לא, "לא תודה", דלג, "לא צריך", "אין צורך"]
+  refine: [זול, "יותר זול", יקר, "יקר מדי", אחר, "משהו אחר", במקום, קרוב]
+  small_talk: [שלום, היי, אהלן, "בוקר טוב", "ערב טוב", תודה]
+
+kinds:
+  air_travel: [טיסה, טיסות, לטוס, מטוס, תעופה]
+  lodging: [מלון, מלונות, אכסניה, לינה, חדר, דירה]
+  ground_transport: [רכב, "השכרת רכב", מונית, טרנספר, רכבת, אוטובוס]
+
+fields:
+  place: place
+  date_range: date_range
+
+place_markers: [ב, אל, ליד, בסביבות]
+range_separators: ["/", "-", "--", "–", "—", עד]
+
+months:
+  ינואר: 1
+  פברואר: 2
+  מרץ: 3
+  אפריל: 4
+  מאי: 5
+  יוני: 6
+  יולי: 7
+  אוגוסט: 8
+  ספטמבר: 9
+  אוקטובר: 10
+  נובמבר: 11
+  דצמבר: 12

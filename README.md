@@ -12,25 +12,32 @@ and finally exports a written plan.
 | [docs/roadmap.md](docs/roadmap.md) | The 25 features, their dependency graph and the build order. **Read this first.** |
 | [docs/architecture/overview.md](docs/architecture/overview.md) | Bounded contexts, package layout, ports, the shape of one turn |
 | [docs/architecture/glossary.md](docs/architecture/glossary.md) | The naming authority |
-| [docs/architecture/decisions.md](docs/architecture/decisions.md) | D1–D16: each decision, its cost, and the feature that reverses it |
+| [docs/architecture/decisions.md](docs/architecture/decisions.md) | D1–D17: each decision, its cost, and the feature that reverses it |
 | `tourganize/` | The application |
 | `config/` | Catalog, prompts and messages — data, not code |
 | `tests/` | See [tests/README.md](tests/README.md) for the conventions |
 
 ## Status
 
-**F04 has landed: what to plan next.** On top of F01's foundation, F02's Trip Plan and F03's
-Requirement Schemas, a Trip Plan now yields a **Planning Agenda**: the Component Kinds the
-traveller raised, first and always (the client's Mentioned-First Rule, which lives in
-`build_agenda` and is not configurable), then the ones they did not — each band ordered by a
-**replaceable Priority Policy** built from the weights and Outcome Dependencies declared in
-[`config/catalog/components.yaml`](config/catalog/components.yaml). Outcome Dependencies are
-soft: a traveller who wants only a hotel is never held waiting on flights they never mentioned, and
-the ordering they do imply is applied by `build_agenda`, so no choice of policy can get it wrong.
-`tourganize catalog agenda --mentioned lodging` prints the order, the bands and the reason codes;
-`TOURGANIZE_PRIORITY_POLICY=fixed` re-orders it with no code change. The importance metric the
-client deferred now has a home to be defined in. Next is
-[F05](docs/features/F05-dialogue-director-and-session-lifecycle.md), the dialogue director.
+**F05 has landed: the inert domain is now a conversation.** On top of F01's foundation, F02's Trip
+Plan, F03's Requirement Schemas and F04's Planning Agenda, a **Dialogue Director** drives the whole of
+the behaviour the client described. It resolves every blocking question *before* anything is sourced —
+one question per turn, never a wall of them — presents an Option Slate, accepts a choice **or** a
+refinement and re-plans the same component any number of times, bundles the optional filters alongside
+the first slate and never asks them again, offers to plan the Component Kinds the traveller never
+mentioned once the ones they did are settled, and closes the session on their answer. It contains all
+the control flow and **no wording**: it emits **Assistant Acts** — structured, locale-neutral intents
+to communicate — which F07 will draw and F08/F10 will phrase.
+
+The state machine is a table, not a pile of `if`s: an undeclared transition raises, no state is
+unreachable, and every turn records one Turn Ledger entry with the states either side of it, the
+intent, the Acts emitted and the Agenda's own explanation of itself. Turns come in through the
+`TurnInterpreter` port, so a deterministic keyword interpreter reading
+[`config/interpretation/keywords.en.yaml`](config/interpretation/keywords.en.yaml) drives it today and
+F08 swaps in a model-backed one with `TOURGANIZE_INTERPRETER`; slates come in through the
+`OptionSlatePlanner` port, which F06 implements for real. There is no surface yet, so the conversation
+is driven from the tests until F07 wires `tourganize chat`. Next is
+[F06](docs/features/F06-option-sourcing-and-fixture-providers.md), option sourcing.
 
 ## Getting started
 
@@ -45,7 +52,7 @@ tourganize catalog gaps --kind lodging                      # what is still bloc
 tourganize catalog gaps --kind lodging \
   --set '{"place": "Paris", "date_range": "2026-10-23/2026-10-28"}'   # is_plannable: true
 tourganize catalog agenda --mentioned lodging               # what would be planned next, and why
-tourganize chat            # exits 2 until F07 implements it
+tourganize chat            # exits 2 until F07 implements it — the Director has no surface yet
 ```
 
 In a container, CPU only:
@@ -84,6 +91,11 @@ secrets redacted, and reports any `TOURGANIZE_*` key it does not recognise.
 | `TOURGANIZE_TELEMETRY_PATH` | Where the JSONL sink writes | `${TOURGANIZE_DATA_DIR}/telemetry.jsonl` |
 | `TOURGANIZE_PRIORITY_POLICY` | Which Priority Policy orders the Agenda: `weighted` or `fixed` | `weighted` |
 | `TOURGANIZE_AGENDA_FAILURE_SKIP` | Sourcing failures in a row before a Component Kind is skipped | `2` |
+| `TOURGANIZE_DIALOGUE_MAX_REASKS` | Asks on one Blocking Rule before the Director gives up on it | `3` |
+| `TOURGANIZE_DIALOGUE_OPTIONAL_ASK_LIMIT` | Optional fields bundled into one `ask_optional` Act | `2` |
+| `TOURGANIZE_DIALOGUE_OFFER_BATCH` | Unmentioned Component Kinds named in one `offer_unmentioned` Act | `2` |
+| `TOURGANIZE_INTERPRETER` | Which Turn Interpreter is wired: `keyword`, or `model` from F08 | `keyword` |
+| `TOURGANIZE_KEYWORD_CONFIG_DIR` | The keyword interpreter's phrase tables | `${TOURGANIZE_CONFIG_DIR}/interpretation` |
 
 A `TOURGANIZE_*` key ending in `_KEY`, `_API_KEY`, `_TOKEN`, `_SECRET`, `_PASSWORD` or
 `_CREDENTIALS` is treated as a secret: it is wrapped in `SecretValue`, which redacts in

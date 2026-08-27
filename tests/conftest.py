@@ -10,7 +10,11 @@ import pytest
 
 from tourganize.adapters.clock.fake import DEFAULT_MOMENT, FrozenClock
 from tourganize.domain.options import Money, PlanOption, Provenance
-from tourganize.platform.settings import Settings, default_schema_dir
+from tourganize.platform.settings import (
+    Settings,
+    default_keyword_config_dir,
+    default_schema_dir,
+)
 
 SettingsFactory = Callable[..., Settings]
 OptionFactory = Callable[..., PlanOption]
@@ -105,6 +109,34 @@ fields:
 }
 
 
+#: A phrase table for the keyword Turn Interpreter with neutral Component Kinds, matching
+#: :data:`SAMPLE_CATALOG`. Small on purpose — the tables are scaffolding F08 replaces — and
+#: English, because every test utterance is. ``fields`` names the two fields ``alpha.v1``
+#: declares for the shapes this interpreter can read.
+SAMPLE_KEYWORDS: Final = """\
+locale: en
+intents:
+  end_session: [goodbye, "that is all"]
+  state_request: ["where are we"]
+  accept_offer: ["yes please", yes]
+  decline_offer: ["no thanks", no]
+  refine: [cheaper, "something else"]
+  small_talk: [hello, thanks]
+kinds:
+  alpha: [alpha]
+  beta: [beta]
+  gamma: [gamma]
+fields:
+  place: place
+  date_range: date_range
+place_markers: [in, at, near]
+range_separators: ["/", "-", "–", to]
+months:
+  october: 10
+  november: 11
+"""
+
+
 def write_catalog(config_dir: Path, text: str = SAMPLE_CATALOG) -> Path:
     """Write a Component Catalog where ``Settings`` expects to find one, and return its path."""
     path = config_dir / "catalog" / "components.yaml"
@@ -129,6 +161,25 @@ def write_schemas(config_dir: Path, schemas: Mapping[str, str] = SAMPLE_SCHEMAS)
     directory.mkdir(parents=True, exist_ok=True)
     for schema_key, text in schemas.items():
         (directory / f"{schema_key}.yaml").write_text(text, encoding="utf-8")
+    return directory
+
+
+def keywords_dir(config_dir: Path) -> Path:
+    """Where ``Settings`` resolves ``TOURGANIZE_KEYWORD_CONFIG_DIR`` to inside ``config_dir``.
+
+    The documented default, asked for rather than spelled out, for the reason
+    :func:`schemas_dir` is: the keyword interpreter is handed its directory and has no fallback.
+    """
+    return default_keyword_config_dir(config_dir)
+
+
+def write_keywords(config_dir: Path, tables: Mapping[str, str] | None = None) -> Path:
+    """Write keyword phrase tables where ``Settings`` expects them, and return the directory."""
+    declared = {"en": SAMPLE_KEYWORDS} if tables is None else tables
+    directory = keywords_dir(config_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    for locale, text in declared.items():
+        (directory / f"keywords.{locale}.yaml").write_text(text, encoding="utf-8")
     return directory
 
 
@@ -172,6 +223,17 @@ def schema_files(tmp_path: Path) -> Path:
     ``catalog_file``; `catalog show` and `doctor` still need only the catalog.
     """
     return write_schemas(tmp_path / "config")
+
+
+@pytest.fixture
+def keyword_files(tmp_path: Path) -> Path:
+    """The keyword interpreter's phrase tables, in the config tree ``settings_factory`` uses.
+
+    From F05 on, "a healthy installation" means these too: the Turn Interpreter is a wired port,
+    so ``doctor`` probes it, and an interpreter with no phrases is a misconfigured install rather
+    than a quiet degradation.
+    """
+    return write_keywords(tmp_path / "config")
 
 
 @pytest.fixture

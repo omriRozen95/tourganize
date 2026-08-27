@@ -20,7 +20,7 @@ SettingsFactory = Callable[..., Settings]
 
 
 def test_a_healthy_installation_passes_every_check(
-    settings_factory: SettingsFactory, catalog_file: Path
+    settings_factory: SettingsFactory, catalog_file: Path, keyword_files: Path
 ) -> None:
     report = run_diagnostics(build_container(settings_factory()), version="9.9.9")
 
@@ -32,9 +32,11 @@ def test_a_healthy_installation_passes_every_check(
         "telemetry_sink",
         "component_catalog",
         "priority_policy",
+        "turn_interpreter",
     }
     assert "doctor: ok" in report.render()
     assert catalog_file.exists()
+    assert keyword_files.is_dir()
 
 
 def test_the_data_dir_is_probed_by_writing(settings_factory: SettingsFactory) -> None:
@@ -248,3 +250,28 @@ def test_the_report_lists_unrecognised_keys_and_pending_ports(
     assert "LlmGateway (F08)" in rendered
     assert "ComponentCatalog" not in report.pending_ports
     assert rendered.startswith("tourganize 9.9.9")
+
+
+def test_the_turn_interpreter_is_probed_by_reading_a_turn(
+    settings_factory: SettingsFactory, catalog_file: Path, keyword_files: Path
+) -> None:
+    """A real probe: the keyword interpreter reads its phrase tables lazily, on the first turn."""
+    del catalog_file, keyword_files
+    report = run_diagnostics(build_container(settings_factory()), version="9.9.9")
+
+    check = next(item for item in report.checks if item.name == "turn_interpreter")
+    assert check.ok
+    assert "KeywordTurnInterpreter" in check.detail
+
+
+def test_missing_phrase_tables_fail_doctor_rather_than_the_first_turn(
+    settings_factory: SettingsFactory, catalog_file: Path
+) -> None:
+    """No `config/interpretation/` is a misconfigured install, and `doctor` is where it shows."""
+    del catalog_file
+    report = run_diagnostics(build_container(settings_factory()), version="9.9.9")
+
+    check = next(item for item in report.checks if item.name == "turn_interpreter")
+    assert not check.ok
+    assert "interpretation" in check.detail
+    assert not report.ok

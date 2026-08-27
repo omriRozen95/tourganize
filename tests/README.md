@@ -43,12 +43,16 @@ differ from the real adapter's.** Same fields, same errors, same ordering guaran
   config tree. From F03 on, `catalog validate` and `catalog gaps` need both fixtures; `catalog
   show` and `doctor` still need only the catalog. The disabled kind deliberately has no
   schema — a kind nobody can plan does not need one.
+- `keyword_files` — the keyword Turn Interpreter's Phrase Tables, in the same config tree. From F05
+  on, "a healthy installation" means these too: the `TurnInterpreter` is a wired port, so `doctor`
+  probes it by reading a turn, and an installation with no phrases fails that check.
 - `option_factory(option_id, kind_key="alpha", *, price=None, **facts)` — a `PlanOption` with
   plausible Provenance, so a test names only what it is about.
 - `write_catalog(config_dir, text=SAMPLE_CATALOG)`, `write_schemas(config_dir,
-  schemas=SAMPLE_SCHEMAS)`, `schemas_dir(config_dir)` and their sample constants are plain
+  schemas=SAMPLE_SCHEMAS)`, `write_keywords(config_dir, tables={"en": SAMPLE_KEYWORDS})`,
+  `schemas_dir(config_dir)`, `keywords_dir(config_dir)` and their sample constants are plain
   functions, imported as `from conftest import write_catalog` by the tests that need a *broken*
-  catalog or schema. `tests` is on `pythonpath` in `pyproject.toml` so that import does not
+  catalog, schema or phrase table. `tests` is on `pythonpath` in `pyproject.toml` so that import does not
   depend on pytest's import mode; the same mechanism is what lets `tests/architecture` import
   `boundaries`.
 - `schemas_dir(config_dir)` is the documented `TOURGANIZE_SCHEMA_DIR` default. The YAML adapter

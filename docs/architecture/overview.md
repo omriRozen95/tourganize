@@ -159,10 +159,17 @@ tourganize/                 # ✔ F01
     requirements/         # ✔ RequirementSchema, FieldSpec, RequirementSet, GapReport   (F03)
     catalog/              # ✔ ComponentKind, invariants, PriorityPolicy, build_agenda (F02/F04)
     options/              # ✔ PlanOption, OptionSlate, OptionQuery, Money, Provenance   (F02/F06)
-  dialogue/               # ✔ pure: PlanningSession, DialogueState, DialogueDirector    (F05)
+  dialogue/               # ✔ pure: stdlib + domain + ports only (D17)                  (F05)
+    turns.py              # ✔ UserTurn, TurnIntent, TurnInterpretation, AssistantAct    (F05)
+    states.py             # ✔ DialogueState and the transition table, as data           (F05)
+    session.py            # ✔ PlanningSession, PendingQuestion, TranscriptEntry         (F05)
+    settings.py           # ✔ DialogueSettings: the four limits the machine reads       (F05)
+    ports.py              # ✔ TurnInterpreter, OptionSlatePlanner, DialogueContext      (F05)
+    director.py           # ✔ DialogueDirector: the whole of the control flow           (F05)
   ports/                  # ✔ abstract protocols only, stdlib-typed
     platform.py           # ✔ Clock, TelemetrySink, TelemetryEvent                      (F01)
     catalog.py            # ✔ ComponentCatalog, PriorityPolicy (re-exported)          (F02/F04)
+    interpretation.py     # ✔ TurnInterpreter, OptionSlatePlanner (re-exported)         (F05)
   application/            # ✔ Composition Root and application services
     composition.py        # ✔ build_container: the only place adapters are constructed  (F01)
     diagnostics.py        # ✔ what `tourganize doctor` reports                          (F01)
@@ -171,7 +178,8 @@ tourganize/                 # ✔ F01
     catalog/              # ✔ yaml/ (catalog + schemas), memory/, priority/             (F02-F04)
     clock/                # ✔ system/, fake/                                            (F01)
     telemetry/            # ✔ jsonl/, null/                                             (F01)
-    options/              # ✔ fixture/, world/, live/                                   (F06, F17, F24)
+    interpretation/       # ✔ keyword/ (the deterministic stand-in F08 replaces)         (F05)
+    options/              # ✔ fake/ ✔, fixture/, world/, live/                     (F05, F06, F17, F24)
     presentation/         # ✔ terminal/, scripted/, web/                                (F07, F25)
     llm/                  #   fake/, claude_code/, hosted/                              (F08, F09, F21)
     knowledge/            #   ingestion/, vector/, tuned/                               (F18, F19, F23)
@@ -187,6 +195,7 @@ services/
 config/                   # ✔ directory exists; contents arrive with the features below
   catalog/components.yaml # ✔ Component Kinds, weights, schemas (data, not code)  (F02)
   catalog/schemas/        # ✔ one Requirement Schema per schema_key              (F03)
+  interpretation/         # ✔ keywords.<locale>.yaml: the keyword Phrase Tables  (F05)
   prompts/<version>/      # versioned Prompt Templates                            (F08)
   messages/<locale>.yaml  # Message Catalogue                                     (F10)
 fixtures/
@@ -198,7 +207,7 @@ tests/                    # ✔ see tests/README.md for the conventions
   unit/ integration/ contracts/ conversations/ architecture/
 ```
 
-**✔ marks what exists today** (after F03); an unmarked directory is created by the feature
+**✔ marks what exists today** (after F05); an unmarked directory is created by the feature
 named beside it, which also fills a marked-but-empty package. F01 created the adapter
 sub-packages up to F07 and no further, so the near shape is visible without inventing folders
 for features nobody has started — an empty package is documentation, not code, and beyond F07
@@ -253,8 +262,13 @@ class SessionRepository(Protocol):
     def list_recent(self, limit: int = 20) -> Sequence[SessionSummary]: ...
 
 # tourganize/ports/interpretation.py                            introduced by F05
+#   both are defined in tourganize/dialogue/ports.py and re-exported here — see D17
 class TurnInterpreter(Protocol):
     def interpret(self, turn: UserTurn, context: DialogueContext) -> TurnInterpretation: ...
+
+class OptionSlatePlanner(Protocol):
+    def plan(self, kind_key: str, requirements: RequirementSet,
+             plan: TripPlan, round_index: int) -> OptionSlate: ...
 
 # tourganize/ports/language.py                                  introduced by F10
 class LanguageDetector(Protocol):
@@ -317,9 +331,20 @@ sequenceDiagram
   S-->>T: rendered reply (RTL-aware)
 ```
 
+`DialogueDirector.handle(turn)` is the whole of that middle column, and it is the only entry point.
+Every turn enters `INTERPRETING`, leaves it for whatever the interpretation implies, and comes to rest
+in one of five Resting States; the transitions are a table, and an undeclared one raises rather than
+being taken. Blocking gaps are resolved before anything is sourced, one question per Act; optional
+filters ride along with the *first* slate and are never re-asked; and every turn records exactly one
+Turn Ledger entry with the states either side of it, the intent, the Acts emitted and the Agenda's own
+explanation of itself.
+
 The Choose-or-Refine Loop is the branch on the *next* turn: intent `choose_option` records a Selection
 and pops the Agenda; intent `refine` merges new Requirement Values and re-enters sourcing for the
-**same** Plan Component with a new round index. Nothing bounds the number of rounds.
+**same** Plan Component with a new round index. Nothing bounds the number of rounds. A refinement that
+*invalidates* a value goes back to eliciting instead of sourcing, which is why `REFINING` is a state
+and not a straight line. A sourcing failure becomes a `report_sourcing_failure` Act and the next Agenda
+entry, never the end of the conversation.
 
 Mentioned-First is enforced in one place: the Agenda is rebuilt every turn by `build_agenda` as
 `ordered(mentioned & unsettled) + ordered(unmentioned & not declined)`, where `ordered` is the

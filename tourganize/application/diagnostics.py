@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Final
 
 from tourganize.application.composition import PENDING_PORTS, Container
+from tourganize.dialogue import DEFAULT_LOCALE, DialogueContext, DialogueState, UserTurn
 from tourganize.domain.catalog import build_agenda
 from tourganize.domain.errors import InvariantViolationError
 from tourganize.domain.invariants import is_aware
@@ -25,6 +26,10 @@ __all__ = ["CheckResult", "DoctorReport", "run_diagnostics"]
 _PROBE_FILENAME: Final = ".tourganize-doctor"
 _PROBE_EVENT_KIND: Final = "doctor_probe"
 _PROBE_PLAN_ID: Final = "doctor"
+#: What the Turn Interpreter probe hands the interpreter. Deliberately meaningless in every
+#: language: the check is that the interpreter *answers*, having read its configuration, not
+#: that it understood anything.
+_PROBE_UTTERANCE: Final = "?"
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +93,7 @@ def run_diagnostics(
         _check_telemetry_sink(container),
         _check_component_catalog(container),
         _check_priority_policy(container),
+        _check_turn_interpreter(container),
     ]
     return DoctorReport(
         version=version,
@@ -198,3 +204,23 @@ def _check_priority_policy(container: Container) -> CheckResult:
         return CheckResult("priority_policy", False, str(exc))
     order = ", ".join(entry.kind_key for entry in agenda.entries) or "nothing"
     return CheckResult("priority_policy", True, f"{named} would plan {order}")
+
+
+def _check_turn_interpreter(container: Container) -> CheckResult:
+    """Read one meaningless turn, which is what makes the interpreter load its configuration.
+
+    A real probe rather than a name, for the reason the catalog check is one: the keyword
+    interpreter reads its phrase tables lazily, so a missing or malformed
+    ``keywords.<locale>.yaml`` would otherwise first be noticed on a traveller's first turn.
+    """
+    interpreter = container.turn_interpreter
+    name = type(interpreter).__name__
+    turn = UserTurn(index=0, text=_PROBE_UTTERANCE, received_at=container.clock.now())
+    context = DialogueContext(state=DialogueState.GREETING, locale=DEFAULT_LOCALE)
+    try:
+        interpretation = interpreter.interpret(turn, context)
+    except ConfigurationError as exc:
+        return CheckResult("turn_interpreter", False, str(exc))
+    return CheckResult(
+        "turn_interpreter", True, f"{name} read a probe turn as {interpretation.intent.value}"
+    )
