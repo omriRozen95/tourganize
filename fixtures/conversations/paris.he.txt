@@ -1,0 +1,15 @@
+# The same session in Hebrew: --locale he, every Act phrased from config/messages/he.yaml.
+#
+#   tourganize chat --locale he --script fixtures/conversations/paris.he.txt
+#
+# Two documented limits of the keyword Turn Interpreter's Hebrew table shape this file, and
+# neither is a defect in the transcript. Hebrew prepositions are written as prefixes, so
+# בפריז is one word and never matches a place marker that matches whole words: the place
+# is written ב פריז instead. And a spelled-out month is not recognised either, so the dates
+# arrive as the ISO-8601 range that table reads identically in both languages. F08's
+# model-backed interpreter is what removes both; until then this is what Hebrew input looks
+# like, and the point of the file is that the whole session completes and nothing raises.
+מלון ב פריז
+2026-10-23/2026-10-28
+2
+לא תודה

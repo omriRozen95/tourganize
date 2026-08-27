@@ -114,10 +114,12 @@ Six contexts. For each: what it owns, and — more importantly — what it is fo
 ### 2.3 Language Services (supporting)
 
 - **Owns:** LLM Gateway port and its Backends, Prompt Library and Prompt Templates, Extraction and
-  Composition call shapes, Language Detector, Locale Tag handling, Message Catalogue, Bidi Shaping.
+  Composition call shapes, Language Detector, Locale Tag handling, Message Catalogue and Display
+  Profiles, the Act Renderer, Bidi Shaping.
 - **Must never know:** the Dialogue state machine's rules. It answers narrow language questions:
   "what does this turn mean, as this schema?", "say this payload in Hebrew".
-- **Features:** F08, F09, F10, F21 (+F20 for the service it talks to).
+- **Features:** F07 (the Message Catalogue, the Display Profiles and the Act Renderer that reads
+  them), F08, F09, F10, F21 (+F20 for the service it talks to).
 
 ### 2.4 Option Sourcing
 
@@ -137,9 +139,11 @@ Six contexts. For each: what it owns, and — more importantly — what it is fo
 
 ### 2.6 Presentation & Export
 
-- **Owns:** Presentation Surface port and its adapters, rendering of Assistant Acts, RTL layout,
+- **Owns:** Presentation Surface port and its adapters, the Session Runner that is the only place
+  that port meets the Dialogue Director, Surface Notices, drawing a Rendered Act, RTL layout,
   Itinerary Document projection, Itinerary Renderer port and its adapters, Export Format selection.
-- **Must never know:** why an Act was emitted, or anything about model or provider mechanics.
+- **Must never know:** why an Act was emitted, how it was worded (the Act Renderer did that, from
+  the Message Catalogue), or anything about model or provider mechanics.
 - **Features:** F07, F13, F14, F25.
 
 **Cross-cutting (a platform concern, not a context):** Settings and secrets, logging, Turn Ledger
@@ -174,11 +178,14 @@ tourganize/                 # ✔ F01
     catalog.py            # ✔ ComponentCatalog, PriorityPolicy (re-exported)          (F02/F04)
     interpretation.py     # ✔ TurnInterpreter, OptionSlatePlanner (re-exported)         (F05)
     options.py            # ✔ OptionSource, OptionSourceRegistry, OptionRanking          (F06)
+    presentation.py       # ✔ PresentationSurface, SurfaceNotice                         (F07)
   application/            # ✔ Composition Root and application services
     composition.py        # ✔ build_container: the only place adapters are constructed  (F01)
     diagnostics.py        # ✔ what `tourganize doctor` reports                          (F01)
     planning_service.py   # ✔ the real OptionSlatePlanner, over OptionSource             (F06)
-  language/               # ✔ PromptLibrary, locale detection, MessageCatalogue, bidi   (F08/F10)
+    session_runner.py     # ✔ run(director, surface): where the two ports meet           (F07)
+  language/               # ✔ PromptLibrary, locale detection, bidi                     (F08/F10)
+    act_renderer.py       # ✔ ActRenderer, RenderedAct, OptionRow, Display Profiles      (F07)
   adapters/
     catalog/              # ✔ yaml/ (catalog + schemas), memory/, priority/             (F02-F04)
     clock/                # ✔ system/, fake/                                            (F01)
@@ -192,7 +199,7 @@ tourganize/                 # ✔ F01
     export/               #   text/, typeset/                                           (F13, F14)
     persistence/          #   memory/, sqlite/                                          (F12)
   platform/               # ✔ Settings, secrets, logging setup, errors, config reader
-  cli.py                  # ✔ doctor, catalog show|validate|gaps|agenda, options search
+  cli.py                  # ✔ doctor, catalog show|validate|gaps|agenda, options search, chat
 services/
   model_service/          # own container: HTTP façade + Inference Engine (F20)
   mcp_feasibility/        # own container: local FastMCP service (F16)
@@ -202,17 +209,18 @@ config/                   # ✔ directory exists; contents arrive with the featu
   catalog/schemas/        # ✔ one Requirement Schema per schema_key              (F03)
   interpretation/         # ✔ keywords.<locale>.yaml: the keyword Phrase Tables  (F05)
   prompts/<version>/      # versioned Prompt Templates                            (F08)
-  messages/<locale>.yaml  # Message Catalogue                                     (F10)
+  messages/<locale>.yaml  # ✔ Message Catalogue                       (F07, F10)
+  messages/display.*.yaml # ✔ Display Profiles: which facts, in what order  (F07)
 fixtures/                 # ✔ see fixtures/README.md for the file format
   options/                # ✔ Fixture Provider data, one directory per kind_key   (F06)
   cassettes/              # recorded Tool Calls                                   (F15)
-  conversations/          # Golden Conversations                                  (F11)
+  conversations/          # ✔ scripted transcripts, one turn per line       (F07, F11)
 docker/                   # ✔ Dockerfiles, compose profiles: dev-cpu ✔, mcp (F16), gpu (F20)
 tests/                    # ✔ see tests/README.md for the conventions
   unit/ integration/ contracts/ conversations/ architecture/
 ```
 
-**✔ marks what exists today** (after F06); an unmarked directory is created by the feature
+**✔ marks what exists today** (after F07); an unmarked directory is created by the feature
 named beside it, which also fills a marked-but-empty package. F01 created the adapter
 sub-packages up to F07 and no further, so the near shape is visible without inventing folders
 for features nobody has started — an empty package is documentation, not code, and beyond F07
@@ -262,9 +270,12 @@ class KnowledgeRetriever(Protocol):
 
 # tourganize/ports/presentation.py                              introduced by F07
 class PresentationSurface(Protocol):
+    @property
+    def surface_id(self) -> str: ...
     def show(self, act: AssistantAct) -> None: ...
     def next_turn(self) -> UserTurn | None: ...   # None = traveller ended the session
     def notify(self, notice: SurfaceNotice) -> None: ...
+    def close(self) -> None: ...
 
 # tourganize/ports/export.py                                    introduced by F13
 class ItineraryRenderer(Protocol):
@@ -348,6 +359,17 @@ sequenceDiagram
   S-->>T: rendered reply (RTL-aware)
 ```
 
+The first and last rows of that diagram are F07's, and one object owns both: the **Session Runner**
+greets, pumps `surface.next_turn()` until the surface answers `None` or the Director closes the
+session, and hands every Act straight on to the surface. It is the only place the
+`PresentationSurface` and the `DialogueDirector` meet, and it is about twenty lines, because a runner
+that grew a decision would be a second state machine. What a surface *draws* is what the **Act
+Renderer** made of each Act: a heading and body lines resolved from the Message Catalogue
+most-specific-first, and — for `present_slate` — a numbered table whose columns come from that
+Component Kind's Display Profile. The Filter Notes F06 attached to an option are drawn beside it,
+because soft filtering nobody can see is silent filtering. Nothing flows back the other way: the Director's payloads stay locale-neutral, which is
+what lets `--locale he` change every sentence on screen and no control flow at all.
+
 `DialogueDirector.handle(turn)` is the whole of that middle column, and it is the only entry point.
 Every turn enters `INTERPRETING`, leaves it for whatever the interpretation implies, and comes to rest
 in one of five Resting States; the transitions are a table, and an undeclared one raises rather than
@@ -381,10 +403,17 @@ Proactive Offers begin only when `agenda.is_mentioned_band_empty()`.
 
 ## 6. Phase 1 in one line
 
-At the end of Phase 1 (F01–F07) the client runs `docker compose run --rm app tourganize chat`, types
-*"find me a hotel in Paris between the 23rd and 28th of October"*, is asked for the one blocking detail
-that is still missing, is shown three lodging options from fixtures, picks one, and sees a plain-text
-summary of the plan. No LLM, no network, no GPU. Every later phase deepens that same path.
+At the end of Phase 1 (F01–F07) the client runs
+`docker compose --profile dev-cpu run --rm app tourganize chat`, types
+*"find me a hotel in Paris between the 23rd and 28th of October 2026"*, is asked the one blocking
+detail the keyword interpreter could not read out of that, answers *"23-28 October 2026"*, and is
+shown three numbered lodging options from fixtures with their prices and review scores. Typing *"2"*
+confirms that choice; the offer to plan the parts of the trip nobody mentioned follows; declining it
+prints a summary of the plan and the process exits 0.
+
+`tourganize chat --script fixtures/conversations/paris.txt` is that same conversation with no
+terminal attached, which is how CI runs it and how F11 will pin it as a Golden Conversation. No LLM,
+no network, no GPU. Every later phase deepens that same path.
 
 ---
 

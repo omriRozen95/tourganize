@@ -1,0 +1,20 @@
+# The Phase 1 demo, written down: somewhere to stay in Paris, chosen, and the rest declined.
+#
+#   tourganize chat --script fixtures/conversations/paris.txt
+#
+# What it demonstrates, turn by turn. Turn 1 names a Component Kind and a place, which leaves
+# the dates blocking, so the Director asks exactly one question before it sources anything.
+# Turn 2 answers it and a numbered slate of three real options comes off fixtures/options/,
+# with prices and review scores. Turn 3 chooses one by its number and the offer to plan the
+# Kinds nobody mentioned follows. Turn 4 declines it, which delivers the plan summary and
+# closes the session — the run exits 0 with no terminal anywhere in sight.
+#
+# The opening is two turns rather than the one the feature file quotes, and deliberately so.
+# "between the 23rd and 28th of October 2026" is a date the keyword Turn Interpreter cannot
+# read: it reads "23-28 October 2026" and ISO ranges, and resolving English prose into a Date
+# Range is F08's job, not a transcript's. Written as one line this file would demonstrate the
+# clarification path instead, which is a fine thing to demonstrate and not this thing.
+find me a hotel in Paris
+23-28 October 2026
+2
+no thanks

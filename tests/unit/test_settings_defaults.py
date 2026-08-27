@@ -45,6 +45,10 @@ def test_every_documented_default() -> None:
     assert settings.slate_size == 3
     assert settings.option_filter_strict is False
     assert settings.option_source_timeout_seconds == 10
+    assert settings.surface == "terminal"
+    assert settings.message_dir == Path("config/messages")
+    assert settings.default_locale == "en"
+    assert settings.supported_locales == ("en", "he")
     assert settings.secrets_file is None
     assert dict(settings.secrets) == {}
 
@@ -137,6 +141,21 @@ def test_an_explicit_catalog_path_wins_over_the_config_dir() -> None:
     assert settings.catalog_path == Path("/etc/kinds.yaml")
 
 
+def test_the_message_dir_follows_the_config_dir() -> None:
+    """The Message Catalogue lives beside the catalog it phrases, and moves with it."""
+    settings = Settings.from_env({"TOURGANIZE_CONFIG_DIR": "/srv/conf"})
+
+    assert settings.message_dir == Path("/srv/conf/messages")
+
+
+def test_an_explicit_message_dir_wins_over_the_config_dir() -> None:
+    settings = Settings.from_env(
+        {"TOURGANIZE_CONFIG_DIR": "/srv/conf", "TOURGANIZE_MESSAGE_DIR": "/etc/wording"}
+    )
+
+    assert settings.message_dir == Path("/etc/wording")
+
+
 def test_a_missing_catalog_file_is_not_a_settings_error() -> None:
     """Absence is reported by `doctor` and refused by the command that needs it, not here."""
     settings = Settings.from_env({"TOURGANIZE_CATALOG_PATH": "/nowhere/components.yaml"})
@@ -189,6 +208,10 @@ def test_the_keys_this_release_reads_are_not_reported_as_unrecognised() -> None:
         "TOURGANIZE_SLATE_SIZE": "3",
         "TOURGANIZE_OPTION_FILTER_STRICT": "false",
         "TOURGANIZE_OPTION_SOURCE_TIMEOUT_SECONDS": "10",
+        "TOURGANIZE_SURFACE": "terminal",
+        "TOURGANIZE_MESSAGE_DIR": "config/messages",
+        "TOURGANIZE_DEFAULT_LOCALE": "en",
+        "TOURGANIZE_SUPPORTED_LOCALES": "en,he",
     }
 
     assert unrecognised_keys(environ) == ()
@@ -315,3 +338,21 @@ def test_doctor_reads_the_profile_through_describe() -> None:
     assert described["slate_size"] == "3"
     assert described["option_filter_strict"] == "false"
     assert described["option_source_timeout_seconds"] == "10"
+
+
+def test_doctor_reads_the_surface_and_the_locales_through_describe() -> None:
+    """``doctor`` prints ``Settings.describe()``, and F07's DoD asks it to report the surface,
+    the locale and the message directory — so all three have to render there."""
+    described = Settings.from_env(
+        {
+            "TOURGANIZE_SURFACE": "scripted",
+            "TOURGANIZE_MESSAGE_DIR": "/etc/wording",
+            "TOURGANIZE_SUPPORTED_LOCALES": "he,en",
+            "TOURGANIZE_DEFAULT_LOCALE": "he",
+        }
+    ).describe()
+
+    assert described["surface"] == "scripted"
+    assert described["message_dir"] == "/etc/wording"
+    assert described["default_locale"] == "he"
+    assert described["supported_locales"] == "he,en"

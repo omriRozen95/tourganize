@@ -1,15 +1,17 @@
 """The ``tourganize`` command line.
 
-Four commands work today: ``--version``, ``doctor``, ``catalog`` (``show``, ``validate``,
-``gaps`` and ``agenda``) and ``options`` (``search``). The rest of the surface is registered as
-stubs that name the feature which will implement them, so the shape of the finished application
-is discoverable from the first release and no later feature has to invent its own entry point.
+Five commands work today: ``--version``, ``doctor``, ``catalog`` (``show``, ``validate``,
+``gaps`` and ``agenda``), ``options`` (``search``) and ``chat`` — the first one that runs a whole
+conversation. The rest of the surface is registered as stubs that name the feature which will
+implement them, so the shape of the finished application is discoverable from the first release
+and no later feature has to invent its own entry point.
 
 Exit codes are part of the contract:
 
 ===  ==========================================================
 0    success
-1    ``doctor`` found a failing check
+1    ``doctor`` found a failing check, or a ``chat`` session
+     ended in an error nobody expected
 2    the invocation was not usable: a sub-command that is
      registered but not implemented yet, an action nobody gave,
      or an argument the command cannot act on (argparse's own
@@ -26,11 +28,22 @@ import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final, TextIO
 
 from tourganize import __version__
-from tourganize.application.composition import Container, build_container
+from tourganize.application import session_runner
+from tourganize.application.composition import (
+    Container,
+    build_container,
+    build_dialogue_settings,
+    build_surface,
+    read_script_file,
+    run_on_surface,
+    surface_transcript,
+)
 from tourganize.application.diagnostics import run_diagnostics
+from tourganize.dialogue import DialogueDirector
 from tourganize.domain.catalog import ComponentKind, PlanningAgenda, build_agenda
 from tourganize.domain.errors import (
     IllegalTransitionError,
@@ -61,6 +74,11 @@ EXIT_NOT_IMPLEMENTED: Final = 2
 #: broken installation. Two names because the two situations read nothing like each other at
 #: the call site.
 EXIT_USAGE_ERROR: Final = 2
+#: The same code as ``EXIT_DOCTOR_FAILED``, and for the same reason the two names above
+#: share theirs: 1 is "the command ran and the answer is bad news". A session that ended in
+#: an exception nobody expected is that, and it is not a broken invocation (2) nor a broken
+#: installation (3).
+EXIT_SESSION_FAILED: Final = 1
 EXIT_CONFIGURATION_ERROR: Final = 3
 
 #: The ``catalog`` actions this release implements. F04 implemented the last one that was
@@ -76,7 +94,6 @@ OPTIONS_ACTIONS: Final = ("search",)
 #: name -> (feature, what that feature delivers). Each entry is deleted from this table by the
 #: feature that implements the command.
 PLANNED_COMMANDS: Final[Mapping[str, tuple[str, str]]] = {
-    "chat": ("F07", "the terminal Presentation Surface"),
     "resume": ("F12", "session persistence and resume"),
     "export": ("F13", "itinerary projection and rendering"),
     "docs": ("F18", "the Knowledge Corpus: add, list, query, index"),
@@ -150,6 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_catalog_parser(subcommands)
     _add_options_parser(subcommands)
+    _add_chat_parser(subcommands)
 
     for name, (feature, summary) in PLANNED_COMMANDS.items():
         stub = subcommands.add_parser(name, help=f"[{feature}] {summary}")
@@ -195,16 +213,43 @@ def _add_options_parser(subcommands: argparse._SubParsersAction[argparse.Argumen
     )
 
 
+def _add_chat_parser(subcommands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """``chat`` — the whole conversation, on whichever Presentation Surface is selected."""
+    chat = subcommands.add_parser("chat", help="plan a trip in conversation")
+    chat.add_argument(
+        "--locale",
+        default=None,
+        metavar="TAG",
+        help="Locale Tag to talk in; must be one of TOURGANIZE_SUPPORTED_LOCALES",
+    )
+    chat.add_argument(
+        "--script",
+        default=None,
+        type=Path,
+        metavar="FILE",
+        help="replay a transcript file, one turn per line, headlessly (implies the "
+        "scripted surface); with TOURGANIZE_SURFACE=scripted and no --script the "
+        "script is read from standard input",
+    )
+    chat.add_argument(
+        "--debug-status",
+        action="store_true",
+        help="show the Dialogue State in the terminal status line",
+    )
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
     environ: Mapping[str, str] | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
+    stdin: TextIO | None = None,
 ) -> int:
     """Run one CLI invocation and return its exit code."""
     out = stdout if stdout is not None else sys.stdout
     err = stderr if stderr is not None else sys.stderr
+    src = stdin if stdin is not None else sys.stdin
     env = environ if environ is not None else os.environ
 
     parser = build_parser()
@@ -254,6 +299,16 @@ def main(
             )
         if command == "catalog":
             return _catalog(build_container(settings), args.catalog_command, out=out, err=err)
+        if command == "chat":
+            return _chat(
+                settings,
+                locale=args.locale,
+                script_path=args.script,
+                debug_status=args.debug_status,
+                out=out,
+                err=err,
+                src=src,
+            )
         if command == "options":
             return _options(
                 build_container(settings),
@@ -276,6 +331,138 @@ def _doctor(settings: Settings, env: Mapping[str, str], *, out: TextIO) -> int:
     report = run_diagnostics(container, version=__version__, unrecognised=unrecognised_keys(env))
     print(report.render(), file=out)
     return EXIT_OK if report.ok else EXIT_DOCTOR_FAILED
+
+
+def _chat(
+    settings: Settings,
+    *,
+    locale: str | None,
+    script_path: Path | None,
+    debug_status: bool,
+    out: TextIO,
+    err: TextIO,
+    src: TextIO,
+) -> int:
+    """``chat`` — one whole planning conversation, from the greeting to the summary.
+
+    The first command that wires everything: the Composition Root builds the ports, the
+    Dialogue Director drives the conversation, the Presentation Surface shows it, and the
+    Session Runner is the twenty lines where the two meet. Nothing about the dialogue is
+    decided here — this function chooses a locale, finds the turns if they were scripted, and
+    turns the outcome into an exit code.
+
+    A session that ends in an exception is exit 1 **naming the session id**, because that id
+    is what finds the turn-by-turn record in telemetry: an error message on its own says what
+    broke, and the id says what the traveller had said by the time it did.
+    """
+    if locale is not None and locale not in settings.supported_locales:
+        supported = ", ".join(settings.supported_locales)
+        print(
+            f"tourganize chat: --locale {locale} is not one of the Locale Tags "
+            f"TOURGANIZE_SUPPORTED_LOCALES declares: {supported}",
+            file=err,
+        )
+        return EXIT_USAGE_ERROR
+    if script_path is not None and not script_path.is_file():
+        # Exit 2 and one line: a transcript file that is not there is a mistyped argument,
+        # and a traceback about it would say the same thing at ten times the length.
+        print(f"tourganize chat: --script {script_path}: no such transcript file", file=err)
+        return EXIT_USAGE_ERROR
+    try:
+        script = _script(settings, script_path, src)
+    except OSError as exc:
+        print(f"tourganize chat: --script {script_path}: {exc.strerror or exc}", file=err)
+        return EXIT_USAGE_ERROR
+    if script is None and settings.surface == "terminal" and not _is_terminal(src):
+        # Refused rather than attempted. A terminal application started against a pipe does
+        # not fail — it *waits*, for a keystroke that is never coming, and a test suite or a
+        # CI job that hangs is a worse answer than any error message. The two ways out are
+        # named because both are one flag away.
+        print(
+            "configuration error: TOURGANIZE_SURFACE=terminal needs a terminal, and stdin is "
+            "not one. Pass --script FILE to replay a transcript, or set "
+            "TOURGANIZE_SURFACE=scripted to read turns from stdin. In a container, "
+            "`docker compose --profile dev-cpu run --rm app tourganize chat` allocates a TTY "
+            "and `run -T` deliberately does not.",
+            file=err,
+        )
+        return EXIT_CONFIGURATION_ERROR
+
+    speaking = locale if locale is not None else settings.default_locale
+    container = build_container(settings)
+    director = DialogueDirector(
+        container.component_catalog,
+        container.priority_policy,
+        container.turn_interpreter,
+        container.option_slate_planner,
+        container.clock,
+        container.telemetry_sink,
+        build_dialogue_settings(settings),
+    )
+    surface = build_surface(
+        container,
+        locale=speaking,
+        script=script,
+        session_id=director.session.session_id,
+        debug_status=debug_status,
+    )
+    # Through ``run_on_surface`` rather than straight into the runner: a terminal interface
+    # has to own the thread the process started on, and the session loop is what moves. A
+    # headless surface runs the pump where it stands, so this line is the same line either way.
+    outcome = run_on_surface(
+        surface, lambda: session_runner.run(director, surface, locale=speaking)
+    )
+    # A headless surface has been talking to itself: what it recorded is the only output the
+    # run has, and printing it is what makes `echo ... | tourganize chat` a usable command
+    # rather than a silent exit code. A surface that drew on a terminal has nothing to add.
+    transcript = surface_transcript(surface)
+    if transcript:
+        print(transcript, file=out)
+    if outcome.error is not None:
+        print(
+            f"tourganize chat: session {outcome.session_id} ended after {outcome.turns} turn(s) "
+            f"in {outcome.error}",
+            file=err,
+        )
+        return EXIT_SESSION_FAILED
+    return EXIT_OK
+
+
+def _is_terminal(stream: TextIO) -> bool:
+    """Whether ``stream`` is an interactive terminal.
+
+    A stream that cannot answer the question is not one: a surface handed a stand-in stream by
+    a test is being driven headlessly, which is exactly the case this guard exists for.
+    """
+    try:
+        return stream.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _script(settings: Settings, path: Path | None, src: TextIO) -> tuple[str, ...] | None:
+    """The turns to replay, or ``None`` when a person is going to type them.
+
+    ``--script FILE`` is read by the Scripted Surface's own rules, through the Composition
+    Root, because ``tourganize.cli`` may not import an adapter. Standard input is read the
+    same way and means the same thing, which is what lets ``echo ... | tourganize chat`` and
+    CI — which has no terminal at all — drive the identical path a transcript file does.
+    """
+    if path is not None:
+        return read_script_file(path)
+    if settings.surface == "scripted":
+        return _turns(src.read())
+    return None
+
+
+def _turns(text: str) -> tuple[str, ...]:
+    """Read piped text as turns: one per line, without the blanks and the ``#`` comments.
+
+    An empty line is not something anybody typed, and a script worth keeping has room for a
+    note saying what it demonstrates.
+    """
+    lines = (line.strip() for line in text.splitlines())
+    return tuple(line for line in lines if line and not line.startswith("#"))
 
 
 def _catalog(container: Container, action: str | None, *, out: TextIO, err: TextIO) -> int:

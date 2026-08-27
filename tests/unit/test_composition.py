@@ -122,22 +122,24 @@ def test_the_container_reports_its_adapters_by_name(settings_factory: SettingsFa
         "OptionSourceRegistry": "SourceRegistry",
         "OptionRanking": "CheapestFirstRanking",
         "OptionSlatePlanner": "PlanningService",
+        "PresentationSurface": "TerminalSurface",
     }
 
 
 def test_ports_awaiting_a_feature_are_declared_not_forgotten() -> None:
-    assert PENDING_PORTS["PresentationSurface"] == "F07"
     assert PENDING_PORTS["LlmGateway"] == "F08"
+    assert PENDING_PORTS["LanguageDetector"] == "F10"
     assert "SessionRepository" in PENDING_PORTS
 
 
 def test_a_wired_port_is_removed_from_the_pending_list() -> None:
-    """F02 the catalog, F04 the policy, F05 the interpreter, F06 the last two: none is missing."""
+    """F02 catalog, F04 policy, F05 interpreter, F06 the two after it, F07 the surface."""
     assert "ComponentCatalog" not in PENDING_PORTS
     assert "PriorityPolicy" not in PENDING_PORTS
     assert "TurnInterpreter" not in PENDING_PORTS
     assert "OptionSource" not in PENDING_PORTS
     assert "OptionSlatePlanner" not in PENDING_PORTS
+    assert "PresentationSurface" not in PENDING_PORTS
 
 
 def test_the_keyword_interpreter_is_pointed_at_the_configured_phrase_tables(

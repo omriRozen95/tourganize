@@ -1,0 +1,144 @@
+# The Message Catalogue for Hebrew.
+#
+# Hebrew is a first-class *content* language, and this file is where a surface stops being an
+# English one. See en.yaml for the key conventions; this file only differs in what it says.
+#
+# Two honest caveats, both of which F10 owns rather than this file. The wording here is
+# provisional — F10 is the feature that reviews it against real Hebrew usage. And `direction:
+# rtl` is *plumbed* from here to RenderedAct.direction and no further: bidi shaping, mixed
+# English/Hebrew runs and locale-aware dates and numbers are all F10's, so a slate rendered
+# here will read in logical order and may not yet *look* right in a terminal. What this file
+# guarantees today is the thing F07 promises: Hebrew renders, every Act, without an exception.
+locale: he
+direction: rtl
+
+messages:
+  greet: "שלום — ספרו לי על הטיול שאתם מתכננים."
+  close: "נסיעה טובה."
+
+  ask_blocking: "פרט אחד לפני שאחפש:"
+  ask_optional: "לא חובה, ואני לא ממתין לתשובה:"
+  report_invalid_value: "לא הצלחתי להשתמש בזה:"
+
+  present_slate: "הנה {count} אפשרויות שמתאימות:"
+  present_slate.lodging: "הנה {count} מקומות לינה שמתאימים:"
+  present_slate.air_travel: "הנה {count} טיסות שמתאימות:"
+  present_slate.ground_transport: "הנה {count} רכבים שמתאימים:"
+
+  confirm_selection: "נרשם: {choice}. ממשיכים."
+  confirm_selection.noted: "רשמתי לפניי גם: {noted}."
+
+  offer_unmentioned: "רוצים שאתכנן גם {kinds}?"
+  offer_unmentioned.remaining: "יש עוד {remaining} שאפשר להציע אחר כך."
+
+  deliver_summary: "מצב התוכנית:"
+  deliver_summary.selection: "{component}: {option_id}"
+  deliver_summary.declined: "נדחו: {declined_kinds}."
+  deliver_summary.open: "עדיין פתוח: {open_kinds}."
+  deliver_summary.empty: "עוד לא נסגר כלום."
+
+  clarify: "סליחה — לא הבנתי."
+  clarify.not_understood: "סליחה — לא הבנתי. אפשר לנסח אחרת?"
+  clarify.unresolved_choice: "לא זיהיתי איזו אפשרות היא {given}. אפשר לבחור לפי המספר."
+  clarify.still_missing: "שאלתי כבר כמה פעמים, אז הנה דוגמה למה שיעזור:"
+  clarify.interpreter_failed: "משהו השתבש בקריאה. אפשר לומר שוב?"
+  clarify.undeclared_field: "אני לא עוקב אחרי {field_name} בחלק הזה של הטיול."
+
+  report_sourcing_failure: "לא הצלחתי להביא אפשרויות עבור {component} כרגע."
+  report_sourcing_failure.sourcing_failed: "לא הצלחתי להביא אפשרויות עבור {component} כרגע — אמשיך עם השאר."
+
+  component.air_travel: "טיסות"
+  component.lodging: "מקום לינה"
+  component.ground_transport: "תחבורה מקומית"
+
+  ask.air_travel.origin: "מאיפה ממריאים?"
+  ask.air_travel.destination: "לאן טסים?"
+  ask.air_travel.date_range: "באילו תאריכים לחפש טיסות?"
+  ask.air_travel.depart_date: "באיזה יום לצאת?"
+  ask.air_travel.return_date: "ובאיזה יום לחזור?"
+  ask.air_travel.passengers: "כמה נוסעים?"
+  ask.air_travel.cabin_class: "יש העדפה למחלקה — תיירים, פרימיום, עסקים או ראשונה?"
+  ask.air_travel.max_stops: "כמה עצירות מקובלות עליכם?"
+  ask.air_travel.budget_ceiling: "יש מחיר שעדיף לא לעבור?"
+
+  ask.lodging.place: "איפה תרצו לישון?"
+  ask.lodging.date_range: "באילו תאריכים לחפש לינה?"
+  ask.lodging.check_in: "באיזה יום נכנסים?"
+  ask.lodging.check_out: "ובאיזה יום יוצאים?"
+  ask.lodging.guests: "כמה אורחים?"
+  ask.lodging.budget_ceiling: "יש מחיר ללילה שעדיף לא לעבור?"
+  ask.lodging.min_review_score: "יש ציון ביקורות שעדיף לא לרדת ממנו?"
+
+  ask.ground_transport.pickup_place: "איפה לאסוף את הרכב?"
+  ask.ground_transport.date_range: "לאילו תאריכים צריך אותו?"
+  ask.ground_transport.pickup_date: "באיזה יום לאסוף?"
+  ask.ground_transport.dropoff_date: "ובאיזה יום להחזיר?"
+  ask.ground_transport.dropoff_place: "איפה להחזיר, אם לא במקום האיסוף?"
+  ask.ground_transport.passengers: "כמה אנשים צריכים להיכנס?"
+  ask.ground_transport.vehicle_class: "יש העדפה לסוג רכב — קומפקטי, סטנדרטי, סטיישן, ואן או פרימיום?"
+  ask.ground_transport.budget_ceiling: "יש מחיר שעדיף לא לעבור?"
+
+  example.air_travel.origin: "לדוגמה: תל אביב."
+  example.air_travel.destination: "לדוגמה: פריז."
+  example.air_travel.date_range: "לדוגמה: 2026-10-23/2026-10-28."
+  example.lodging.place: "לדוגמה: פריז."
+  example.ground_transport.date_range: "לדוגמה: 2026-10-23/2026-10-28."
+
+  requirement.invalid.blank: "זה הגיע ריק."
+  requirement.invalid.not_text: "ציפיתי כאן למילים."
+  requirement.invalid.not_a_number: "זה לא מספר."
+  requirement.invalid.not_an_integer: "זה חייב להיות מספר שלם."
+  requirement.invalid.below_minimum: "זה מתחת למה שאפשר לבקש."
+  requirement.invalid.above_maximum: "זה מעל למה שאפשר לבקש."
+  requirement.invalid.not_a_date: "לא הצלחתי לקרוא את זה כתאריך."
+  requirement.invalid.not_a_date_range: "לא הצלחתי לקרוא את זה כטווח תאריכים."
+  requirement.invalid.date_range_reversed: "הטווח נגמר לפני שהוא מתחיל."
+  requirement.invalid.not_a_duration: "לא הצלחתי לקרוא את זה כמשך זמן."
+  requirement.invalid.not_money: "לא הצלחתי לקרוא את זה כסכום."
+  requirement.invalid.money_without_currency: "לסכום הזה חסר מטבע."
+  requirement.invalid.not_in_enum: "זה לא אחת מהאפשרויות שיש לי."
+  requirement.invalid.not_a_boolean: "זה חייב להיות כן או לא."
+
+  field.origin: "מוצא"
+  field.destination: "יעד"
+  field.date_range: "תאריכים"
+  field.depart_date: "תאריך יציאה"
+  field.return_date: "תאריך חזרה"
+  field.passengers: "נוסעים"
+  field.cabin_class: "מחלקה"
+  field.max_stops: "עצירות"
+  field.budget_ceiling: "תקציב"
+  field.place: "מקום"
+  field.check_in: "כניסה"
+  field.check_out: "יציאה"
+  field.guests: "אורחים"
+  field.min_review_score: "ציון ביקורות"
+  field.pickup_place: "איסוף"
+  field.dropoff_place: "החזרה"
+  field.pickup_date: "תאריך איסוף"
+  field.dropoff_date: "תאריך החזרה"
+  field.vehicle_class: "סוג רכב"
+
+  fact.name: "שם"
+  fact.area: "אזור"
+  fact.review_score: "ציון"
+  fact.room_type: "חדר"
+  fact.refundable: "ביטול"
+  fact.breakfast: "ארוחת בוקר"
+  fact.carrier: "חברה"
+  fact.flight_number: "טיסה"
+  fact.stops: "עצירות"
+  fact.depart_local: "המראה"
+  fact.arrive_local: "נחיתה"
+  fact.duration_minutes: "משך"
+  fact.cabin_class: "מחלקה"
+  fact.supplier: "ספק"
+  fact.vehicle_class: "סוג רכב"
+  fact.transmission: "תיבת הילוכים"
+  fact.unlimited_mileage: "ק״מ חופשי"
+
+  list.separator: ", "
+  money.format: "{amount} {currency}"
+  value.true: "כן"
+  value.false: "לא"
+  value.none: "—"

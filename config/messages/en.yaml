@@ -1,0 +1,165 @@
+# The Message Catalogue for English — data, not code.
+#
+# This file is where wording lives. An Assistant Act carries message keys, field names,
+# kind_keys, opaque codes and structured option data and *never* a sentence, so that one
+# Dialogue Director can serve a traveller reading English and a traveller reading Hebrew.
+# The Act Renderer (tourganize/language/act_renderer.py) is the only thing that reads this.
+#
+# locale     the Locale Tag this catalogue is for; must match the file name
+# direction  ltr or rtl — declared rather than inferred from the tag, because guessing
+#            writing direction from an identifier goes wrong on the first locale nobody
+#            thought of. F10 owns making rtl *look* right; this only plumbs it.
+# messages   message key -> phrasing, with {placeholder} substitution from the Act payload
+#
+# Keys are looked up most-specific-first: `<act>.<reason_code>`, then `<act>.<kind_key>`,
+# then `<act>`. A Component Kind that wants its own phrasing writes one line here; a Kind
+# that does not writes nothing and gets the generic line. That is the whole mechanism by
+# which adding a fourth Component Kind stays configuration.
+#
+# A key nobody declares renders a visible ⟪missing:the.key⟫ marker and logs at WARNING. It
+# is never a crash and never a blank line: a demonstration that quietly loses a question is
+# worse than one that shows where the question should have been.
+locale: en
+direction: ltr
+
+messages:
+  # -- the Act vocabulary ----------------------------------------------------------------
+  greet: "Hi — tell me about the trip you have in mind."
+  close: "Safe travels."
+
+  ask_blocking: "One thing before I can look:"
+  ask_optional: "Optional, and I will not wait on it:"
+  report_invalid_value: "I could not use that:"
+
+  present_slate: "Here are {count} options that fit:"
+  present_slate.lodging: "Here are {count} places to stay that fit:"
+  present_slate.air_travel: "Here are {count} flights that fit:"
+  present_slate.ground_transport: "Here are {count} vehicles that fit:"
+
+  confirm_selection: "Noted: {choice}. Moving on."
+  confirm_selection.noted: "I have also written down: {noted}."
+
+  offer_unmentioned: "Would you like me to plan {kinds} as well?"
+  offer_unmentioned.remaining: "There are {remaining} more I can offer after that."
+
+  deliver_summary: "Where the plan stands:"
+  deliver_summary.selection: "{component}: {option_id}"
+  deliver_summary.declined: "Turned down: {declined_kinds}."
+  deliver_summary.open: "Still open: {open_kinds}."
+  deliver_summary.empty: "Nothing is settled yet."
+
+  clarify: "Sorry — I did not follow that."
+  clarify.not_understood: "Sorry — I did not follow that. Could you put it another way?"
+  clarify.unresolved_choice: "I could not tell which one {given} was. Pick one by its number."
+  clarify.still_missing: "I have asked a few times, so here is an example of what helps:"
+  clarify.interpreter_failed: "Something went wrong reading that. Could you say it again?"
+  clarify.undeclared_field: "I do not track {field_name} for this part of the trip."
+
+  report_sourcing_failure: "I could not get options for {component} just now."
+  report_sourcing_failure.sourcing_failed: "I could not get options for {component} just now — I will carry on with the rest."
+
+  # -- Component Kinds. The Component Catalog names the key; this file phrases it. ---------
+  component.air_travel: "flights"
+  component.lodging: "somewhere to stay"
+  component.ground_transport: "getting around"
+
+  # -- the questions a Requirement Schema declares -----------------------------------------
+  ask.air_travel.origin: "Where are you flying from?"
+  ask.air_travel.destination: "Where are you flying to?"
+  ask.air_travel.date_range: "Which dates should I look at for the flights?"
+  ask.air_travel.depart_date: "Which day would you like to fly out?"
+  ask.air_travel.return_date: "And which day back?"
+  ask.air_travel.passengers: "How many people are travelling?"
+  ask.air_travel.cabin_class: "Any preference on cabin — economy, premium economy, business or first?"
+  ask.air_travel.max_stops: "How many stops are you willing to take?"
+  ask.air_travel.budget_ceiling: "Is there a price you would rather stay under?"
+
+  ask.lodging.place: "Where would you like to stay?"
+  ask.lodging.date_range: "Which dates should I look at for the stay?"
+  ask.lodging.check_in: "Which day would you check in?"
+  ask.lodging.check_out: "And which day would you check out?"
+  ask.lodging.guests: "How many guests?"
+  ask.lodging.budget_ceiling: "Is there a nightly price you would rather stay under?"
+  ask.lodging.min_review_score: "Is there a review score you would rather not go below?"
+
+  ask.ground_transport.pickup_place: "Where would you pick the vehicle up?"
+  ask.ground_transport.date_range: "Which dates do you need it for?"
+  ask.ground_transport.pickup_date: "Which day would you pick it up?"
+  ask.ground_transport.dropoff_date: "And which day would you drop it off?"
+  ask.ground_transport.dropoff_place: "Where would you drop it off, if not where you picked it up?"
+  ask.ground_transport.passengers: "How many people need to fit?"
+  ask.ground_transport.vehicle_class: "Any preference on the vehicle — compact, standard, estate, van or premium?"
+  ask.ground_transport.budget_ceiling: "Is there a price you would rather stay under?"
+
+  # -- the examples offered once a Blocking Rule has been asked about too many times --------
+  example.air_travel.origin: "For example: Tel Aviv."
+  example.air_travel.destination: "For example: Paris."
+  example.air_travel.date_range: "For example: 2026-10-23/2026-10-28."
+  example.lodging.place: "For example: Paris."
+  example.ground_transport.date_range: "For example: 2026-10-23/2026-10-28."
+
+  # -- why a value could not be used --------------------------------------------------------
+  requirement.invalid.blank: "that came through empty."
+  requirement.invalid.not_text: "I was expecting words there."
+  requirement.invalid.not_a_number: "that is not a number."
+  requirement.invalid.not_an_integer: "that has to be a whole number."
+  requirement.invalid.below_minimum: "that is below what I can ask for."
+  requirement.invalid.above_maximum: "that is above what I can ask for."
+  requirement.invalid.not_a_date: "I could not read that as a date."
+  requirement.invalid.not_a_date_range: "I could not read that as a range of dates."
+  requirement.invalid.date_range_reversed: "that range ends before it starts."
+  requirement.invalid.not_a_duration: "I could not read that as a length of time."
+  requirement.invalid.not_money: "I could not read that as an amount."
+  requirement.invalid.money_without_currency: "that amount needs a currency."
+  requirement.invalid.not_in_enum: "that is not one of the choices I have."
+  requirement.invalid.not_a_boolean: "that has to be a yes or a no."
+
+  # -- field labels: what a Filter Note and an optional-field list are called ---------------
+  field.origin: "departure"
+  field.destination: "destination"
+  field.date_range: "dates"
+  field.depart_date: "outbound date"
+  field.return_date: "return date"
+  field.passengers: "passengers"
+  field.cabin_class: "cabin"
+  field.max_stops: "stops"
+  field.budget_ceiling: "budget"
+  field.place: "place"
+  field.check_in: "check-in"
+  field.check_out: "check-out"
+  field.guests: "guests"
+  field.min_review_score: "review score"
+  field.pickup_place: "pick-up"
+  field.dropoff_place: "drop-off"
+  field.pickup_date: "pick-up date"
+  field.dropoff_date: "drop-off date"
+  field.vehicle_class: "vehicle"
+
+  # -- option table column labels ------------------------------------------------------------
+  fact.name: "name"
+  fact.area: "area"
+  fact.review_score: "score"
+  fact.room_type: "room"
+  fact.refundable: "refundable"
+  fact.breakfast: "breakfast"
+  fact.carrier: "airline"
+  fact.flight_number: "flight"
+  fact.stops: "stops"
+  fact.depart_local: "departs"
+  fact.arrive_local: "arrives"
+  fact.duration_minutes: "duration"
+  fact.cabin_class: "cabin"
+  fact.supplier: "supplier"
+  fact.vehicle_class: "vehicle"
+  fact.transmission: "gearbox"
+  fact.unlimited_mileage: "unlimited mileage"
+
+  # -- the small words the renderer itself needs ---------------------------------------------
+  # Only what something actually reads. A row's number and the marker on a Filter Note are
+  # composed by the surface out of `OptionRow`'s structured fields — `1.` and `!` are the same
+  # in both shipped locales, and a message key nobody looks up is drift waiting to happen.
+  list.separator: ", "
+  money.format: "{amount} {currency}"
+  value.true: "yes"
+  value.false: "no"
+  value.none: "—"

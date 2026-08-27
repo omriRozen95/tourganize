@@ -9,7 +9,7 @@ scaffolding to be deleted once live providers exist.
 |---|---|---|
 | `options/<kind_key>/*.json` ✔ | Fixture Provider data: recorded Plan Options per Component Kind | F06 |
 | `cassettes/` | Recorded Tool Calls and their results | F15 |
-| `conversations/` | Golden Conversations | F11 |
+| `conversations/*.txt` ✔ | Scripted transcripts: one traveller turn per line | F07, F11 |
 
 `TOURGANIZE_FIXTURE_DIR` points at `options/` and defaults to `fixtures/options`.
 
@@ -65,6 +65,24 @@ from a recording.
 any machine — the Golden Conversations depend on it. The order is a stable permutation seeded by
 `RequirementSet.digest()`, so a refinement that changes what was asked for visibly changes what
 comes back.
+
+## `conversations/*.txt`
+
+A transcript the Scripted Surface replays: **one traveller turn per line**, read in order, and
+then the surface closes by answering `None` — which is the same close signal a terminal sends on
+`Ctrl+C`. Blank lines are dropped and a line starting with `#` is a comment, so a transcript can
+say what each turn is meant to prove. Nothing else is in the file: no expected replies, no
+assistant lines, no markup. What the assistant said is the *output* of replaying it, and pinning
+that here as well would be recording the answer next to the question.
+
+```bash
+tourganize chat --script fixtures/conversations/paris.txt              # exits 0, no TTY needed
+tourganize chat --locale he --script fixtures/conversations/paris.he.txt
+```
+
+`paris.txt` is the Phase 1 demo, written down. F11 turns these files into Golden Conversations by
+storing the Assistant Acts each one produces beside it; until then the expectation lives in
+`tests/integration/test_chat_end_to_end.py`, which is also where the act-name sequence is pinned.
 
 ## Adding a Component Kind's options
 

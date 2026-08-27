@@ -12,7 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from tourganize.application.composition import PENDING_PORTS, Container
+from tourganize.application.composition import (
+    PENDING_PORTS,
+    Container,
+    surface_dependency_problem,
+)
 from tourganize.dialogue import DEFAULT_LOCALE, DialogueContext, DialogueState, UserTurn
 from tourganize.domain.catalog import build_agenda
 from tourganize.domain.errors import InvariantViolationError, UnknownComponentKindError
@@ -95,6 +99,8 @@ def run_diagnostics(
         _check_priority_policy(container),
         _check_turn_interpreter(container),
         _check_option_sources(container),
+        _check_message_catalogue(container),
+        _check_presentation_surface(container),
     ]
     return DoctorReport(
         version=version,
@@ -264,4 +270,57 @@ def _check_option_sources(container: Container) -> CheckResult:
         "option_sources",
         True,
         f"{profiles or 'nothing to source'} ({recorded} of {len(resolved)} with recorded data)",
+    )
+
+
+def _check_message_catalogue(container: Container) -> CheckResult:
+    """Load the Message Catalogue and Display Profiles of every supported locale.
+
+    A real probe rather than a name, for the reason the catalog check is one: the renderer
+    reads its files lazily, so a locale listed in ``TOURGANIZE_SUPPORTED_LOCALES`` with no
+    ``<locale>.yaml`` behind it would otherwise first be noticed as a screen full of
+    ⟪missing:…⟫ markers in front of whoever the demonstration was for.
+
+    Every supported locale is loaded, not only the default: the point of shipping a second
+    one from day one is that the second one is exercised. A locale with no Display Profile
+    file is *not* a failure — the renderer falls back to "every declared fact, in declaration
+    order", which is what an unconfigured fourth Component Kind gets too — so the count of
+    profiles is reported and a zero is left to speak for itself.
+    """
+    renderer = container.act_renderer
+    described: list[str] = []
+    for locale in container.settings.supported_locales:
+        try:
+            catalogue = renderer.catalogue(locale)
+            profiles = renderer.profiles(locale)
+        except ConfigurationError as exc:
+            return CheckResult("message_catalogue", False, str(exc))
+        described.append(
+            f"{locale} ({len(catalogue.messages)} messages, {catalogue.direction}, "
+            f"{len(profiles.kinds)} display profiles)"
+        )
+    return CheckResult(
+        "message_catalogue", True, f"{renderer.message_dir}: {', '.join(described) or 'nothing'}"
+    )
+
+
+def _check_presentation_surface(container: Container) -> CheckResult:
+    """Report the selected surface, and whether the installation could actually run it.
+
+    Only the *selected* one is judged. An installation that drives the Scripted Surface in a
+    container with no terminal library is healthy, and telling it otherwise would train
+    everybody to ignore a failing check — which is the failure mode a health report cannot
+    afford. When the selected surface is the terminal and its extra is missing, the line names
+    the pip command that fixes it.
+    """
+    settings = container.settings
+    adapter = container.adapters()["PresentationSurface"]
+    problem = surface_dependency_problem(settings)
+    if problem is not None:
+        return CheckResult("presentation_surface", False, problem)
+    return CheckResult(
+        "presentation_surface",
+        True,
+        f"{adapter} ({settings.surface}) in {settings.default_locale}, "
+        f"of {', '.join(settings.supported_locales)}",
     )

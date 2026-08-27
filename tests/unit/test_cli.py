@@ -8,7 +8,13 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from conftest import write_catalog, write_keywords, write_option_fixtures, write_schemas
+from conftest import (
+    write_catalog,
+    write_keywords,
+    write_messages,
+    write_option_fixtures,
+    write_schemas,
+)
 
 from tourganize import __version__
 from tourganize.cli import (
@@ -31,10 +37,11 @@ def _run(argv: list[str], environ: Mapping[str, str] | None = None) -> tuple[int
 
 
 def _environ(tmp_path: Path, **extra: str) -> dict[str, str]:
-    """A healthy installation in ``tmp_path``: catalog, schemas, phrase tables and fixtures."""
+    """A healthy installation: catalog, schemas, phrase tables, messages and fixtures."""
     write_catalog(tmp_path / "config")
     write_schemas(tmp_path / "config")
     write_keywords(tmp_path / "config")
+    write_messages(tmp_path / "config")
     write_option_fixtures(tmp_path / "fixtures" / "options")
     environ = {
         "TOURGANIZE_ENV": "test",
@@ -71,9 +78,19 @@ def test_every_planned_command_exits_2_naming_its_feature(command: str) -> None:
     assert out == ""
 
 
-def test_chat_names_f07() -> None:
-    _code, _out, err = _run(["chat"])
-    assert "F07" in err
+def test_chat_without_a_terminal_refuses_rather_than_waiting_for_a_keystroke() -> None:
+    """The default surface is the terminal one, and a pipe is not a terminal.
+
+    Refusing is the whole point: a Textual application started against a stand-in stream does
+    not fail, it waits — and a suite that hangs says less than any error message. Both ways
+    out are named in the refusal because both are one flag away.
+    """
+    code, out, err = _run(["chat"])
+
+    assert code == EXIT_CONFIGURATION_ERROR
+    assert "--script" in err
+    assert "TOURGANIZE_SURFACE=scripted" in err
+    assert out == ""
 
 
 @pytest.mark.parametrize("action", CATALOG_ACTIONS)
@@ -523,7 +540,7 @@ def test_an_invalid_setting_exits_3_before_anything_is_built(tmp_path: Path) -> 
 
 def test_a_stub_command_reports_a_broken_configuration_rather_than_its_own_stubbing() -> None:
     """Settings are resolved before dispatch: "fail fast, never half-configured"."""
-    code, out, err = _run(["chat"], {"TOURGANIZE_LOG_FORMAT": "xml"})
+    code, out, err = _run([next(iter(sorted(PLANNED_COMMANDS)))], {"TOURGANIZE_LOG_FORMAT": "xml"})
 
     assert code == EXIT_CONFIGURATION_ERROR
     assert "TOURGANIZE_LOG_FORMAT" in err

@@ -51,11 +51,19 @@ differ from the real adapter's.** Same fields, same errors, same ordering guaran
 - `keyword_files` — the keyword Turn Interpreter's Phrase Tables, in the same config tree. From F05
   on, "a healthy installation" means these too: the `TurnInterpreter` is a wired port, so `doctor`
   probes it by reading a turn, and an installation with no phrases fails that check.
+- `message_files` — the Message Catalogue and the Display Profiles, one of each per supported
+  locale, in that same config tree. From F07 on, "a healthy installation" means these as well:
+  the Act Renderer is wired, so `doctor` loads a catalogue for every locale in
+  `TOURGANIZE_SUPPORTED_LOCALES`, and a locale with no catalogue is a misconfigured installation
+  rather than a conversation full of `⟪missing:…⟫` markers. Hebrew is present from the first
+  surface, so the RTL path is never retrofitted.
 - `option_factory(option_id, kind_key="alpha", *, price=None, **facts)` — a `PlanOption` with
   plausible Provenance, so a test names only what it is about.
 - `write_catalog(config_dir, text=SAMPLE_CATALOG)`, `write_schemas(config_dir,
   schemas=SAMPLE_SCHEMAS)`, `write_keywords(config_dir, tables={"en": SAMPLE_KEYWORDS})`,
-  `schemas_dir(config_dir)`, `keywords_dir(config_dir)`, `keyword_table(*kind_keys)` and their
+  `write_messages(config_dir, catalogues=SAMPLE_MESSAGES)`, `schemas_dir(config_dir)`,
+  `keywords_dir(config_dir)`, `messages_dir(config_dir)`, `keyword_table(*kind_keys)`,
+  `message_catalogue(locale, direction, prefix="")` and their
   sample constants are plain functions, imported as `from conftest import write_catalog` by the
   tests that need a *broken* catalog, schema or phrase table. `keyword_table()` is where
   `SAMPLE_KEYWORDS` comes from: a suite whose Component Kinds differ from `SAMPLE_CATALOG`'s asks
@@ -78,6 +86,12 @@ pytest tests/unit                         # one directory
 pytest tests/architecture                 # the dependency rules
 pytest -k telemetry                        # one topic
 ```
+
+A test that needs a *whole conversation* rather than a fixture tree reads a transcript out of
+`fixtures/conversations/` and replays it through the Scripted Surface — one traveller turn per
+line, no expected replies in the file. `tests/integration/test_chat_end_to_end.py` is where F07's
+Definition of done is made observable, and where the act-name sequence of the first Golden
+Conversation is pinned until F11 stores it beside the transcript.
 
 `tests/architecture/test_import_linter_enforcement.py` shells out to `lint-imports`; it
 skips itself when import-linter is not installed, and the AST checks in

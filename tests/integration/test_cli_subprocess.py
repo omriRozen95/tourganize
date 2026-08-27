@@ -24,6 +24,10 @@ SHIPPED_SCHEMAS = REPO_ROOT / "config" / "catalog" / "schemas"
 #: The keyword interpreter's shipped phrase tables, pointed at for the same reason again: the
 #: ``turn_interpreter`` check in ``doctor`` reads them, so this is what proves they parse.
 SHIPPED_KEYWORDS = REPO_ROOT / "config" / "interpretation"
+#: The shipped Message Catalogue and Display Profiles, pointed at for the reason the phrase
+#: tables are: ``doctor`` loads a catalogue per supported locale, so this is what proves the
+#: shipped ``en`` and ``he`` files parse — in a subprocess, from disk, as an installation does.
+SHIPPED_MESSAGES = REPO_ROOT / "config" / "messages"
 #: The Fixture Provider's recorded option data, pointed at for the reason the catalog is: only
 #: a subprocess reading the *shipped* tree can prove the shipped tree loads and serves options.
 SHIPPED_FIXTURES = REPO_ROOT / "fixtures" / "options"
@@ -38,6 +42,7 @@ def _run(*arguments: str, tmp_path: Path, **extra: str) -> subprocess.CompletedP
         "TOURGANIZE_CATALOG_PATH": str(SHIPPED_CATALOG),
         "TOURGANIZE_SCHEMA_DIR": str(SHIPPED_SCHEMAS),
         "TOURGANIZE_KEYWORD_CONFIG_DIR": str(SHIPPED_KEYWORDS),
+        "TOURGANIZE_MESSAGE_DIR": str(SHIPPED_MESSAGES),
         "TOURGANIZE_FIXTURE_DIR": str(SHIPPED_FIXTURES),
         "TOURGANIZE_DATA_DIR": str(tmp_path / "var"),
     }
@@ -228,10 +233,11 @@ def test_asking_for_a_provider_this_release_cannot_build_exits_3(tmp_path: Path)
 
 
 def test_a_stub_command_exits_2(tmp_path: Path) -> None:
-    result = _run("chat", tmp_path=tmp_path)
+    """``resume`` is F12's. Every command this release *does* implement has left this list."""
+    result = _run("resume", tmp_path=tmp_path)
 
     assert result.returncode == 2
-    assert "F07" in result.stderr
+    assert "F12" in result.stderr
 
 
 def test_an_invalid_setting_exits_3(tmp_path: Path) -> None:

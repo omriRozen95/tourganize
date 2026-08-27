@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
-from conftest import keyword_table, write_keywords
+from conftest import keyword_table, write_keywords, write_messages
 
 from tourganize.application.composition import Container, build_container
 from tourganize.application.diagnostics import run_diagnostics
@@ -82,6 +82,10 @@ def settings_for(tmp_path: Path, **overrides: str) -> Settings:
     # Phrase tables too, so that `doctor` is asked about a *whole* installation rather than one
     # with a port missing: the interpreter check would otherwise fail for reasons of its own.
     write_keywords(config, {"en": keyword_table(FOURTH)})
+    # And a Message Catalogue, for the same reason — and one that says nothing whatever about
+    # this Kind, which is the point: a fourth topic renders from the fallbacks, so `doctor`
+    # passes and a slate draws without a single line of configuration naming it.
+    write_messages(config)
     environ = {
         "TOURGANIZE_ENV": "test",
         "TOURGANIZE_CONFIG_DIR": str(config),
