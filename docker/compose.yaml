@@ -21,6 +21,27 @@ services:
       # named volume so it survives `--rm` and never lands in the working tree.
       - ..:/app
       - tourganize-data:/var/lib/tourganize
+    # The Phase 1 demo, and the one command in this file that needs a terminal:
+    #
+    #   docker compose --profile dev-cpu run --rm app tourganize chat
+    #
+    # `run` allocates a TTY and keeps stdin open by default, which is exactly what the
+    # Terminal Surface needs: Textual draws on a real terminal and reads real keystrokes, and
+    # `init: true` above is what makes the Ctrl+C that closes it reach the application instead
+    # of stopping at PID 1. Three consequences worth knowing before something looks broken:
+    #
+    #   * `run -T` allocates no TTY. Use it for everything headless — `doctor`, `catalog`,
+    #     `options`, and `tourganize chat --script FILE` — which is how CI drives this image,
+    #     since a GitHub runner has no terminal to give. `chat` with no `--script` under `-T`
+    #     is the one combination that cannot work, and it is the one nobody needs.
+    #   * `docker compose up` never runs the chat. A service started that way is detached from
+    #     any terminal; `run` is the verb for a command a person is going to talk to.
+    #   * `TOURGANIZE_SURFACE=scripted` makes `chat` read its script from standard input, so
+    #     `echo "..." | docker compose --profile dev-cpu run --rm -T app tourganize chat`
+    #     works with no file and no terminal at all.
+    #
+    # `command` stays `doctor`: the default of an image is the safest thing it can do, and
+    # `run` overrides it with whatever is asked for.
     command: ["tourganize", "doctor"]
 
 volumes:

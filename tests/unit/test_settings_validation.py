@@ -103,3 +103,58 @@ def test_a_malformed_secrets_file_line_names_the_line(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError) as raised:
         Settings.from_env({"TOURGANIZE_SECRETS_FILE": str(secrets_file)})
     assert "line 2" in str(raised.value)
+
+
+def test_a_surface_nobody_ships_is_refused_naming_the_choices() -> None:
+    """The two surfaces F07 ships are the whole list; a typo must name them, not shrug."""
+    with pytest.raises(ConfigurationError) as raised:
+        Settings.from_env({"TOURGANIZE_SURFACE": "curses"})
+
+    message = str(raised.value)
+    assert "TOURGANIZE_SURFACE" in message
+    assert "is not one of" in message
+    assert "'terminal'" in message and "'scripted'" in message
+
+
+def test_the_supported_locales_are_de_duplicated_in_the_order_they_were_written() -> None:
+    """It is also the order ``doctor`` probes in and a report reads in, so it is preserved."""
+    settings = Settings.from_env({"TOURGANIZE_SUPPORTED_LOCALES": "he, en ,he"})
+
+    assert settings.supported_locales == ("he", "en")
+
+
+def test_an_empty_supported_locale_list_is_refused() -> None:
+    """Supporting no locale is a Message Catalogue that will never be found."""
+    with pytest.raises(ConfigurationError) as raised:
+        Settings.from_env({"TOURGANIZE_SUPPORTED_LOCALES": " , ,"})
+
+    assert "TOURGANIZE_SUPPORTED_LOCALES" in str(raised.value)
+
+
+def test_a_default_locale_outside_the_supported_list_is_refused_naming_both_keys() -> None:
+    """The two keys disagree, and only naming one of them leaves the reader guessing which."""
+    with pytest.raises(ConfigurationError) as raised:
+        Settings.from_env(
+            {"TOURGANIZE_SUPPORTED_LOCALES": "en,he", "TOURGANIZE_DEFAULT_LOCALE": "fr"}
+        )
+
+    message = str(raised.value)
+    assert "TOURGANIZE_DEFAULT_LOCALE" in message
+    assert "TOURGANIZE_SUPPORTED_LOCALES" in message
+    assert "'fr'" in message
+
+
+def test_a_default_locale_inside_a_custom_supported_list_is_accepted() -> None:
+    settings = Settings.from_env(
+        {"TOURGANIZE_SUPPORTED_LOCALES": "fr,he", "TOURGANIZE_DEFAULT_LOCALE": "he"}
+    )
+
+    assert settings.supported_locales == ("fr", "he")
+    assert settings.default_locale == "he"
+
+
+def test_the_default_locale_falls_back_to_the_first_supported_one() -> None:
+    """Nothing set is not a configuration error: the list's own head is the sane default."""
+    settings = Settings.from_env({"TOURGANIZE_SUPPORTED_LOCALES": "he,en"})
+
+    assert settings.default_locale == "he"

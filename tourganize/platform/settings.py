@@ -61,6 +61,12 @@ list — would answer "not one of 'keyword'", which is true and useless.
 every Component Kind, or a comma-separated list of ``kind_key=profile`` overrides, because a
 client with an account for one topic and none for another has to be able to mix them. See
 :class:`OptionSourceProfile`.
+
+``TOURGANIZE_DEFAULT_LOCALE`` is checked against ``TOURGANIZE_SUPPORTED_LOCALES`` here rather
+than at first use: a default nobody supports is a Message Catalogue that will never be found,
+and finding that out when a traveller has already typed something is too late. The supported
+list is refused empty and de-duplicated in the order it was written, because it is also the
+list ``doctor`` probes and the order a report reads in.
 """
 
 from __future__ import annotations
@@ -91,9 +97,11 @@ __all__ = [
     "PriorityPolicyName",
     "Settings",
     "SourceProfileName",
+    "SurfaceName",
     "TelemetrySinkName",
     "default_catalog_path",
     "default_keyword_config_dir",
+    "default_message_dir",
     "default_schema_dir",
     "default_telemetry_path",
     "unrecognised_keys",
@@ -105,6 +113,7 @@ TelemetrySinkName = Literal["null", "jsonl"]
 PriorityPolicyName = Literal["weighted", "fixed"]
 InterpreterName = Literal["keyword", "model"]
 SourceProfileName = Literal["fixture", "world", "live"]
+SurfaceName = Literal["terminal", "scripted"]
 
 PREFIX: Final = "TOURGANIZE_"
 
@@ -114,6 +123,7 @@ _TELEMETRY_SINKS: Final[tuple[TelemetrySinkName, ...]] = ("null", "jsonl")
 _PRIORITY_POLICIES: Final[tuple[PriorityPolicyName, ...]] = ("weighted", "fixed")
 _INTERPRETERS: Final[tuple[InterpreterName, ...]] = ("keyword", "model")
 _SOURCE_PROFILES: Final[tuple[SourceProfileName, ...]] = ("fixture", "world", "live")
+_SURFACES: Final[tuple[SurfaceName, ...]] = ("terminal", "scripted")
 
 DEFAULT_CONFIG_DIR: Final = Path("config")
 DEFAULT_DATA_DIR: Final = Path("var")
@@ -125,6 +135,11 @@ INTERPRETATION_RELATIVE_PATH: Final = Path("interpretation")
 DEFAULT_FIXTURE_DIR: Final = Path("fixtures") / "options"
 DEFAULT_SLATE_SIZE: Final = 3
 DEFAULT_SOURCE_TIMEOUT_SECONDS: Final = 10.0
+MESSAGES_RELATIVE_PATH: Final = Path("messages")
+#: The Locale Tags this release ships a Message Catalogue for. English is the code and
+#: documentation language; Hebrew is a first-class *content* language, and shipping it from
+#: the first surface is what keeps the RTL path from being retrofitted (F10).
+DEFAULT_SUPPORTED_LOCALES: Final = ("en", "he")
 
 #: A ``TOURGANIZE_*`` key ending in one of these is treated as a secret: it is wrapped in
 #: :class:`SecretValue` and never rendered by ``doctor`` or the logs.
@@ -169,6 +184,10 @@ KNOWN_KEYS: Final = frozenset(
         "TOURGANIZE_SLATE_SIZE",
         "TOURGANIZE_OPTION_FILTER_STRICT",
         "TOURGANIZE_OPTION_SOURCE_TIMEOUT_SECONDS",
+        "TOURGANIZE_SURFACE",
+        "TOURGANIZE_MESSAGE_DIR",
+        "TOURGANIZE_DEFAULT_LOCALE",
+        "TOURGANIZE_SUPPORTED_LOCALES",
     }
 )
 
@@ -238,6 +257,10 @@ class Settings:
     slate_size: int
     option_filter_strict: bool
     option_source_timeout_seconds: float
+    surface: SurfaceName
+    message_dir: Path
+    default_locale: str
+    supported_locales: tuple[str, ...]
     secrets_file: Path | None = None
     secrets: Mapping[str, SecretValue] = field(default_factory=dict)
     # Later features append fields here; they never re-invent loading.
@@ -253,6 +276,10 @@ class Settings:
         sink = _choice(merged, "TOURGANIZE_TELEMETRY_SINK", _TELEMETRY_SINKS, "jsonl")
         data_dir = _directory(merged, "TOURGANIZE_DATA_DIR", DEFAULT_DATA_DIR)
         config_dir = _directory(merged, "TOURGANIZE_CONFIG_DIR", DEFAULT_CONFIG_DIR)
+        locales = _locale_tags(merged, "TOURGANIZE_SUPPORTED_LOCALES", DEFAULT_SUPPORTED_LOCALES)
+        default_locale = _supported_locale(
+            merged, "TOURGANIZE_DEFAULT_LOCALE", locales, "TOURGANIZE_SUPPORTED_LOCALES"
+        )
 
         return cls(
             env=env,
@@ -298,6 +325,12 @@ class Settings:
                 "TOURGANIZE_OPTION_SOURCE_TIMEOUT_SECONDS",
                 DEFAULT_SOURCE_TIMEOUT_SECONDS,
             ),
+            surface=_choice(merged, "TOURGANIZE_SURFACE", _SURFACES, "terminal"),
+            message_dir=_directory(
+                merged, "TOURGANIZE_MESSAGE_DIR", default_message_dir(config_dir)
+            ),
+            default_locale=locales[0] if default_locale is None else default_locale,
+            supported_locales=locales,
             secrets_file=secrets_file,
             secrets=_collect_secrets(merged),
         )
@@ -330,6 +363,10 @@ class Settings:
             "slate_size": str(self.slate_size),
             "option_filter_strict": "true" if self.option_filter_strict else "false",
             "option_source_timeout_seconds": _plain_seconds(self.option_source_timeout_seconds),
+            "surface": self.surface,
+            "message_dir": str(self.message_dir),
+            "default_locale": self.default_locale,
+            "supported_locales": ",".join(self.supported_locales),
             "secrets_file": "unset" if self.secrets_file is None else str(self.secrets_file),
             "secrets": _describe_secrets(self.secrets),
         }
@@ -353,6 +390,11 @@ def default_catalog_path(config_dir: Path) -> Path:
 def default_schema_dir(config_dir: Path) -> Path:
     """Where Requirement Schemas live unless ``TOURGANIZE_SCHEMA_DIR`` says otherwise."""
     return config_dir / SCHEMAS_RELATIVE_PATH
+
+
+def default_message_dir(config_dir: Path) -> Path:
+    """Where the Message Catalogue and Display Profiles live, absent an explicit setting."""
+    return config_dir / MESSAGES_RELATIVE_PATH
 
 
 def default_keyword_config_dir(config_dir: Path) -> Path:
@@ -497,6 +539,39 @@ def _positive_number(environ: Mapping[str, str], key: str, default: float) -> fl
     if number <= 0:
         raise ConfigurationError(f"{key}={value} must be above zero")
     return number
+
+
+def _locale_tags(environ: Mapping[str, str], key: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """A comma-separated list of Locale Tags: refused empty, de-duplicated in written order."""
+    value = _raw(environ, key)
+    if value is None:
+        return default
+    seen: list[str] = []
+    for item in value.split(","):
+        tag = item.strip()
+        if tag and tag not in seen:
+            seen.append(tag)
+    if not seen:
+        raise ConfigurationError(
+            f"{key}={value!r} names no Locale Tag; write a comma-separated list such as "
+            f"{','.join(default)!r}"
+        )
+    return tuple(seen)
+
+
+def _supported_locale(
+    environ: Mapping[str, str], key: str, supported: tuple[str, ...], supported_key: str
+) -> str | None:
+    """One Locale Tag that ``supported`` has to contain, or ``None`` when nothing is set."""
+    value = _raw(environ, key)
+    if value is None:
+        return None
+    if value not in supported:
+        raise ConfigurationError(
+            f"{key}={value!r} is not in {supported_key}={','.join(supported)}; a default locale "
+            f"nobody supports is a Message Catalogue that will never be found"
+        )
+    return value
 
 
 def _source_profile(environ: Mapping[str, str], key: str) -> OptionSourceProfile:

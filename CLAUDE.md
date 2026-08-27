@@ -4,22 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is right now
 
-**A specification repository whose planning domain is complete, driven by a conversation, and now
-sourcing real option data.** F01–F06 have landed: there is an installable `tourganize` package, a test
-suite, a CPU-only container and CI; a Trip Plan made of Plan Components whose *types* are declared as
-data in `config/catalog/components.yaml`; per kind, a Requirement Schema in `config/catalog/schemas/`
-saying what has to be known before that component can be planned; a Planning Agenda that answers "what
-do we plan next" — mentioned Component Kinds first, then the rest, each band ordered by a replaceable
+**A specification repository whose walking skeleton is closed: a person can now talk to it.** F01–F07
+have landed: there is an installable `tourganize` package, a test suite, a CPU-only container and CI; a
+Trip Plan made of Plan Components whose *types* are declared as data in
+`config/catalog/components.yaml`; per kind, a Requirement Schema in `config/catalog/schemas/` saying
+what has to be known before that component can be planned; a Planning Agenda that answers "what do we
+plan next" — mentioned Component Kinds first, then the rest, each band ordered by a replaceable
 Priority Policy; a **Dialogue Director**, the explicit state machine that resolves blocking questions
 before sourcing, presents Option Slates, runs the unbounded choose-or-refine loop, offers the Kinds
-nobody mentioned and closes the session on their answer; and, behind its `OptionSlatePlanner` seam, a
-real **Planning Service** over the `OptionSource` port — Fixture Providers reading
-`fixtures/options/<kind_key>/*.json`, merged, soft-filtered, ranked and truncated to a slate. It emits
-**Assistant Acts** and consumes **Turn Interpretations** through a port, so a deterministic keyword
-interpreter drives it today and F08 replaces that by config. Working commands are `tourganize
---version`, `doctor`, `catalog show`, `catalog validate`, `catalog gaps`, `catalog agenda` and
-`options search`; there is no surface yet, so the dialogue is driven from the tests until F07 wires
-`chat`. The remaining 19 feature specs are still the plan, implemented one at a time, in order.
+nobody mentioned and closes the session on their answer; behind its `OptionSlatePlanner` seam, a real
+**Planning Service** over the `OptionSource` port — Fixture Providers reading
+`fixtures/options/<kind_key>/*.json`, merged, soft-filtered, ranked and truncated to a slate; and, in
+front of it, the `PresentationSurface` port with a **Terminal Surface** a person types into and a
+**Scripted Surface** that replays a transcript headlessly, joined to the Director by a twenty-line
+**Session Runner**. Wording arrives last and from data: an **Act Renderer** turns each locale-neutral
+Assistant Act into a heading, lines and a numbered option table, drawing every word from the **Message
+Catalogue** in `config/messages/<locale>.yaml` and every option column from a **Display Profile** in
+`config/messages/display.<locale>.yaml`, in `en` or `he`. It consumes **Turn Interpretations** through a
+port, so a deterministic keyword interpreter drives it today and F08 replaces that by config. Working
+commands are `tourganize --version`, `doctor`, `catalog show`, `catalog validate`, `catalog gaps`,
+`catalog agenda`, `options search` and `chat` — which is the Phase 1 demo, and runs headlessly with
+`--script`. The remaining 18 feature specs are still the plan, implemented one at a time, in order.
 
 Four kinds of file, with different rules:
 
@@ -30,7 +35,7 @@ Four kinds of file, with different rules:
 | `docs/**` | The deliverable | Edit freely, but honour the consistency rules below. |
 | `tourganize/**`, `tests/**`, `config/**`, `fixtures/**`, `docker/**` | The implementation | Governed by the feature file it belongs to plus the invariants below. |
 
-The next thing to build is `docs/features/F07-presentation-surface-and-terminal-shell.md`. Read
+The next thing to build is `docs/features/F08-llm-gateway-and-prompt-library.md`. Read
 `docs/roadmap.md` before starting any implementation work.
 
 ## Reading order for a new session
@@ -91,7 +96,7 @@ four concurrently and reports every verdict; run serially they cost four round-t
 first failure.
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,terminal]"
 scripts/check                             # lint, types, imports, tests — parallel, all verdicts
 scripts/check tests/unit/test_agenda.py   # pytest narrowed; the other three gates still run
 scripts/check --cov                       # …plus the coverage report CI prints
@@ -112,7 +117,11 @@ tourganize catalog gaps --kind lodging    # the Gap Report; `--set '<json>'` sup
 tourganize catalog agenda --mentioned lodging   # the Planning Agenda: bands, ranks, reason codes
 tourganize options search --kind lodging \
   --set '{"place":"Paris","date_range":"2026-10-23/2026-10-28"}'   # a real Option Slate
+tourganize chat                           # the Phase 1 demo: the Terminal Surface, needs a TTY
+tourganize chat --script fixtures/conversations/paris.txt   # the same session, headless
+tourganize chat --locale he --script fixtures/conversations/paris.he.txt   # the RTL path
 docker compose --profile dev-cpu run --rm app tourganize doctor
+docker compose --profile dev-cpu run --rm app tourganize chat   # the demo, in the container
 ```
 
 `lint-imports` must be on `PATH` for `tests/architecture/test_import_linter_enforcement.py` to run
@@ -127,7 +136,7 @@ A new test that writes into the package tree needs the same marker.
 If a contract has to be weakened to make a feature compile, that needs an ADR entry, not a config
 tweak.
 
-Commands added by later features (each defined in its own spec): `chat` (F07), `llm probe` (F08),
+Commands added by later features (each defined in its own spec): `llm probe` (F08),
 `messages lint` (F10), `eval` / `eval report` / `eval parity` (F11, F21), `sessions` / `resume` (F12),
 `export` (F13), `tools list|call` (F15), `docs add|list|query|index` (F18, F19). Run one golden
 conversation with `tourganize eval --only <conversation_id>`.
@@ -178,8 +187,11 @@ all control flow and no wording; the surface and Language Services turn Acts int
 `OptionSource`, `OptionSourceRegistry`, `OptionRanking` (F06, declared in `ports/options.py`;
 `OptionQuery`/`OptionSourceResult` are defined in `domain/options/query.py` and re-exported, because
 they carry a `Selection` and `domain/trip` already imports `domain/options`) ·
-`PresentationSurface` (F07) · `LlmGateway` (F08) · `LanguageDetector` (F10) ·
-`SessionRepository` (F12) · `ItineraryRenderer` (F13) · `ToolBroker` (F15) ·
+`PresentationSurface` (F07, declared in `ports/presentation.py` with `SurfaceNotice`; adapters
+`TerminalSurface` and `ScriptedSurface` under `adapters/presentation/`, joined to the Director by
+`application/session_runner.py` and rendered by `language/act_renderer.py`) ·
+`LlmGateway` (F08) · `LanguageDetector` (F10) · `SessionRepository` (F12) ·
+`ItineraryRenderer` (F13) · `ToolBroker` (F15) ·
 `KnowledgeCorpus`, `TextExtractor`, `PassageSplitter` (F18) · `KnowledgeRetriever`, `EmbeddingModel` (F19).
 
 Contract suites in `tests/contracts/` are parametrised over *every* adapter of a port, including fakes.
@@ -220,7 +232,20 @@ guards it; if one starts failing, fix the code, not the test.
 - **Proactive offers start only when the mentioned band is empty**; a declined kind is never offered
   again in that session.
 - **No prose in the domain.** `PlanOption` has no `title`/`description`; Act payloads carry message keys
-  and structured data. All wording comes from the Message Catalogue or an LLM Composition call.
+  and structured data. All wording comes from the Message Catalogue or an LLM Composition call, and
+  *which* facts an option's row shows comes from the Display Profile — so the Act Renderer holds no
+  branch per Component Kind, and a fourth Kind renders with no Python change and no config edit.
+- **A surface renders and yields; it never decides.** A Presentation Surface reads no Planning Session
+  and touches none of the Director's internals, and the Director never learns which surface is
+  attached — the Session Runner is the only place the two ports meet. `next_turn()` returning `None` is
+  *the* close signal: a `Ctrl+C`, an exhausted script and a hung-up socket are one event, and nothing
+  else in the protocol may raise to say the conversation is over.
+- **A missing message key is a visible marker, never a crash and never a blank.** An undeclared key or
+  an unfillable `{placeholder}` renders `⟪missing:the.key⟫` and logs at WARNING, and the session
+  finishes. A missing message *file* is different — every sentence would be a marker — so it is a
+  `ConfigurationError`, and a Locale Tag outside `TOURGANIZE_SUPPORTED_LOCALES` falls back to the
+  default rather than reaching one. Column labels are the exception that proves the rule: they fall
+  back to the raw fact name at DEBUG, because a fourth Kind must render a table without config.
 - **Logical text order everywhere except the terminal boundary.** Bidi shaping is applied only in the
   terminal surface; exports hand logical order to the typeset engine, and the web surface (F25) must
   never call the shaper.

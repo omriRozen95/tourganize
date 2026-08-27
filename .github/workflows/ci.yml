@@ -25,9 +25,13 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      # The `terminal` extra is not optional here any more: F07 made the Terminal Surface the
+      # default `TOURGANIZE_SURFACE`, and the tests that cover it import textual. The base
+      # install stays dependency-free — that is what the container job below still proves for
+      # every command that does not need a terminal.
       - name: Install
         id: install
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,terminal]"
 
       # `if: !cancelled()` on every gate below: they are independent, so one run reports all
       # four verdicts instead of stopping at the first. The job still fails if any of them
@@ -75,6 +79,22 @@ jobs:
 
       - name: Report the gaps of a shipped Component Kind
         run: docker compose --profile dev-cpu run --rm app tourganize catalog gaps --kind lodging
+
+      # The Phase 1 demo, headless. `run -T` allocates **no** TTY, which is deliberate: the
+      # interactive demo is `docker compose --profile dev-cpu run --rm app tourganize chat`
+      # and needs a terminal, CI has none, and the Scripted Surface is the whole answer to
+      # that. If these two steps pass, `--script` never needed one.
+      - name: Replay the Phase 1 conversation headlessly
+        run: >
+          docker compose --profile dev-cpu run --rm -T app
+          tourganize chat --script fixtures/conversations/paris.txt
+
+      # Hebrew, on the same day the surface exists rather than retrofitted: the RTL path has
+      # to survive a whole session, which is all this asserts (F10 makes it *look* right).
+      - name: Replay the same conversation in Hebrew
+        run: >
+          docker compose --profile dev-cpu run --rm -T app
+          tourganize chat --locale he --script fixtures/conversations/paris.he.txt
 
       - name: Confirm the container runs as a non-root user
         run: docker compose --profile dev-cpu run --rm app id -u | grep -qx 10001

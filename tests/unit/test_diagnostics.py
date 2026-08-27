@@ -20,7 +20,10 @@ SettingsFactory = Callable[..., Settings]
 
 
 def test_a_healthy_installation_passes_every_check(
-    settings_factory: SettingsFactory, catalog_file: Path, keyword_files: Path
+    settings_factory: SettingsFactory,
+    catalog_file: Path,
+    keyword_files: Path,
+    message_files: Path,
 ) -> None:
     report = run_diagnostics(build_container(settings_factory()), version="9.9.9")
 
@@ -34,6 +37,8 @@ def test_a_healthy_installation_passes_every_check(
         "priority_policy",
         "turn_interpreter",
         "option_sources",
+        "message_catalogue",
+        "presentation_surface",
     }
     assert "doctor: ok" in report.render()
     assert catalog_file.exists()

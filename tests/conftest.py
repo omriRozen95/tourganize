@@ -13,6 +13,7 @@ from tourganize.domain.options import Money, PlanOption, Provenance
 from tourganize.platform.settings import (
     Settings,
     default_keyword_config_dir,
+    default_message_dir,
     default_schema_dir,
 )
 
@@ -271,6 +272,163 @@ def write_keywords(config_dir: Path, tables: Mapping[str, str] | None = None) ->
     return directory
 
 
+#: A Message Catalogue with neutral Component Kinds, matching :data:`SAMPLE_CATALOG` and the
+#: prompt message keys :data:`SAMPLE_SCHEMAS` declares. It is deliberately *complete* for the
+#: Act vocabulary and deliberately *incomplete* for facts: the Act Renderer falls back to a
+#: raw fact name when the catalogue declares no label, and a sample that declared every label
+#: would hide the property a fourth Component Kind depends on.
+_MESSAGES_TEMPLATE: Final = """\
+locale: {locale}
+direction: {direction}
+
+messages:
+  greet: "{prefix}greet"
+  close: "{prefix}close"
+  ask_blocking: "{prefix}one thing first:"
+  ask_optional: "{prefix}optional:"
+  report_invalid_value: "{prefix}could not use that:"
+  present_slate: "{prefix}here are {{count}} options:"
+  present_slate.alpha: "{prefix}here are {{count}} alphas:"
+  confirm_selection: "{prefix}noted: {{choice}}."
+  confirm_selection.noted: "{prefix}also noted: {{noted}}."
+  offer_unmentioned: "{prefix}shall I plan {{kinds}}?"
+  offer_unmentioned.remaining: "{prefix}{{remaining}} more after that."
+  deliver_summary: "{prefix}where the plan stands:"
+  deliver_summary.selection: "{prefix}{{component}}: {{option_id}}"
+  deliver_summary.declined: "{prefix}turned down: {{declined}}."
+  deliver_summary.open: "{prefix}still open: {{open}}."
+  deliver_summary.empty: "{prefix}nothing settled yet."
+  clarify: "{prefix}did not follow that."
+  clarify.not_understood: "{prefix}did not follow that — another way?"
+  clarify.unresolved_choice: "{prefix}which one was {{given}}?"
+  clarify.still_missing: "{prefix}an example that helps:"
+  clarify.interpreter_failed: "{prefix}something went wrong reading that."
+  clarify.undeclared_field: "{prefix}I do not track {{field_name}} here."
+  report_sourcing_failure: "{prefix}no options for {{component}} just now."
+  report_sourcing_failure.sourcing_failed: "{prefix}no options for {{component}} — carrying on."
+
+  component.alpha: "{prefix}alphas"
+  component.beta: "{prefix}betas"
+  component.gamma: "{prefix}gammas"
+
+  ask.alpha.place: "{prefix}where?"
+  ask.alpha.date_range: "{prefix}which dates?"
+  ask.alpha.starts_on: "{prefix}starting when?"
+  ask.alpha.ends_on: "{prefix}ending when?"
+  ask.alpha.party_size: "{prefix}how many?"
+  ask.alpha.budget_ceiling: "{prefix}a price to stay under?"
+  ask.alpha.min_rating: "{prefix}a rating to stay above?"
+  example.alpha.place: "{prefix}for example: Somewhere."
+  ask.beta.place: "{prefix}where, for the beta?"
+  ask.beta.comfort: "{prefix}basic, standard or premium?"
+
+  requirement.invalid.blank: "{prefix}that came through empty."
+  requirement.invalid.not_text: "{prefix}words were expected."
+  requirement.invalid.not_a_number: "{prefix}that is not a number."
+  requirement.invalid.not_an_integer: "{prefix}that must be whole."
+  requirement.invalid.below_minimum: "{prefix}that is too low."
+  requirement.invalid.above_maximum: "{prefix}that is too high."
+  requirement.invalid.not_a_date: "{prefix}not a date."
+  requirement.invalid.not_a_date_range: "{prefix}not a range of dates."
+  requirement.invalid.date_range_reversed: "{prefix}that range runs backwards."
+  requirement.invalid.not_a_duration: "{prefix}not a length of time."
+  requirement.invalid.not_money: "{prefix}not an amount."
+  requirement.invalid.money_without_currency: "{prefix}that amount needs a currency."
+  requirement.invalid.not_in_enum: "{prefix}not one of the choices."
+  requirement.invalid.not_a_boolean: "{prefix}that must be yes or no."
+
+  field.place: "{prefix}place"
+  field.date_range: "{prefix}dates"
+  field.starts_on: "{prefix}start"
+  field.ends_on: "{prefix}end"
+  field.party_size: "{prefix}party size"
+  field.budget_ceiling: "{prefix}budget"
+  field.min_rating: "{prefix}rating"
+  field.comfort: "{prefix}comfort"
+
+  fact.name: "{prefix}name"
+  fact.review_score: "{prefix}score"
+
+  list.separator: ", "
+  money.format: "{{amount}} {{currency}}"
+  option.row: "{{number}}. "
+  option.filter_notes: "{prefix}over your {{notes}}"
+  value.true: "{prefix}yes"
+  value.false: "{prefix}no"
+  value.none: "-"
+"""
+
+#: A Display Profile file for :data:`SAMPLE_CATALOG`. ``alpha`` declares columns, ``beta``
+#: declares none on purpose: the fallback — every fact the source declared, in declaration
+#: order — is what an unconfigured fourth Component Kind gets, and a sample where every Kind
+#: was configured would never exercise it.
+_DISPLAY_TEMPLATE: Final = """\
+locale: {locale}
+
+money: {{minor_digits: 2}}
+
+default:
+  columns: []
+  show_price: true
+
+kinds:
+  alpha:
+    columns:
+      - {{fact: name}}
+      - {{fact: review_score, unit: "/10"}}
+    show_price: true
+"""
+
+
+def message_catalogue(locale: str = "en", direction: str = "ltr", prefix: str = "") -> str:
+    """A Message Catalogue for ``locale``.
+
+    ``prefix`` goes in front of every phrasing, so a test that renders in two locales can tell
+    them apart without asserting on a translation nobody wrote.
+    """
+    return _MESSAGES_TEMPLATE.format(locale=locale, direction=direction, prefix=prefix)
+
+
+#: The locales a healthy sample installation ships, matching ``TOURGANIZE_SUPPORTED_LOCALES``.
+#: Hebrew is here from the first surface for the reason the shipped catalogue ships it: the
+#: RTL path exists from day one rather than being retrofitted, and ``doctor`` probes every
+#: supported locale, so an installation missing one is a failing check.
+SAMPLE_MESSAGES: Final[Mapping[str, str]] = {
+    "en": message_catalogue("en", "ltr"),
+    "he": message_catalogue("he", "rtl", prefix="he:"),
+}
+
+#: The Display Profiles beside them, one per locale.
+SAMPLE_DISPLAY_PROFILES: Final[Mapping[str, str]] = {
+    locale: _DISPLAY_TEMPLATE.format(locale=locale) for locale in SAMPLE_MESSAGES
+}
+
+
+def messages_dir(config_dir: Path) -> Path:
+    """Where ``Settings`` resolves ``TOURGANIZE_MESSAGE_DIR`` to inside ``config_dir``.
+
+    The documented default, asked for rather than spelled out, for the reason
+    :func:`schemas_dir` is: the Act Renderer is handed its directory and has no fallback.
+    """
+    return default_message_dir(config_dir)
+
+
+def write_messages(
+    config_dir: Path,
+    catalogues: Mapping[str, str] = SAMPLE_MESSAGES,
+    profiles: Mapping[str, str] | None = None,
+) -> Path:
+    """Write a Message Catalogue and Display Profile per locale, and return the directory."""
+    declared = SAMPLE_DISPLAY_PROFILES if profiles is None else profiles
+    directory = messages_dir(config_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    for locale, text in catalogues.items():
+        (directory / f"{locale}.yaml").write_text(text, encoding="utf-8")
+    for locale, text in declared.items():
+        (directory / f"display.{locale}.yaml").write_text(text, encoding="utf-8")
+    return directory
+
+
 @pytest.fixture
 def settings_factory(tmp_path: Path) -> SettingsFactory:
     """Build ``Settings`` whose directories live inside this test's own ``tmp_path``.
@@ -334,6 +492,17 @@ def option_fixture_dir(tmp_path: Path) -> Path:
     assert on.
     """
     return write_option_fixtures(tmp_path / "fixtures" / "options")
+
+
+@pytest.fixture
+def message_files(tmp_path: Path) -> Path:
+    """The Message Catalogue and Display Profiles, in the config tree ``settings_factory`` uses.
+
+    From F07 on, "a healthy installation" means these too: the Act Renderer is wired, so
+    ``doctor`` loads a catalogue for every supported locale, and a locale with no catalogue is
+    a misconfigured install rather than a conversation full of ⟪missing:…⟫ markers.
+    """
+    return write_messages(tmp_path / "config")
 
 
 @pytest.fixture

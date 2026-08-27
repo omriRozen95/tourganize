@@ -1,0 +1,47 @@
+# Display Profiles for Hebrew. See display.en.yaml for what every key means.
+#
+# This file is what keeps a Plan Option prose-free (F02) while still letting a hotel and a
+# flight look different on screen. It is *structure only*: the column headings are message
+# keys in en.yaml (`fact.<name>`, or `fact.<kind_key>.<name>` for a Kind that wants its own),
+# and nothing here is a sentence.
+#
+# A Component Kind with no entry falls back to `default`, which shows every fact the source
+# declared, in declaration order. That is the property F02 and F06 both rest on: a fourth
+# Component Kind renders with no Python change *and* no edit to this file — an entry here is
+# how a Kind gets a nicer table, never how it gets one at all.
+#
+# columns      ordered list of {fact: <fact name>, unit: <suffix>}; empty means "all of them"
+# show_price   whether the option's own price gets a column
+# money        minor units per major unit, for turning 74000 into 740.00
+locale: he
+
+money: {minor_digits: 2}
+
+default:
+  columns: []
+  show_price: true
+
+kinds:
+  lodging:
+    columns:
+      - {fact: name}
+      - {fact: area}
+      - {fact: review_score, unit: "/10"}
+      - {fact: room_type}
+    show_price: true
+  air_travel:
+    columns:
+      - {fact: carrier}
+      - {fact: flight_number}
+      - {fact: depart_local}
+      - {fact: arrive_local}
+      - {fact: stops}
+      - {fact: cabin_class}
+    show_price: true
+  ground_transport:
+    columns:
+      - {fact: supplier}
+      - {fact: vehicle_class}
+      - {fact: transmission}
+      - {fact: review_score, unit: "/10"}
+    show_price: true
