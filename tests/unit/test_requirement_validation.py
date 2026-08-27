@@ -15,7 +15,6 @@ from tourganize.domain.requirements import (
     FieldKind,
     FieldSpec,
     Obligation,
-    invalid_reason,
     normalise,
 )
 from tourganize.domain.requirements.validation import (
@@ -89,15 +88,13 @@ def test_every_reason_key_is_declared() -> None:
         (FieldKind.MONEY, Money(74000, "EUR"), Money(74000, "EUR")),
         (FieldKind.MONEY, {"amount_minor": 74000, "currency": "EUR"}, Money(74000, "EUR")),
         (FieldKind.MONEY, "74000 EUR", Money(74000, "EUR")),
-        (FieldKind.MONEY, "ILS 25000", Money(25000, "ILS")),
-        (FieldKind.MONEY, "74000 eur", Money(74000, "EUR")),
+        (FieldKind.MONEY, "25000 ils", Money(25000, "ILS")),
         (FieldKind.BOOLEAN, True, True),
-        (FieldKind.BOOLEAN, "False", False),
-        (FieldKind.BOOLEAN, " YES ", True),
-        (FieldKind.BOOLEAN, "no", False),
+        (FieldKind.BOOLEAN, False, False),
+        (FieldKind.BOOLEAN, "true", True),
+        (FieldKind.BOOLEAN, " False ", False),
         (FieldKind.DURATION, 90, timedelta(minutes=90)),
-        (FieldKind.DURATION, "2h", timedelta(hours=2)),
-        (FieldKind.DURATION, "1d", timedelta(days=1)),
+        (FieldKind.DURATION, "90", timedelta(minutes=90)),
         (FieldKind.DURATION, timedelta(minutes=45), timedelta(minutes=45)),
     ],
 )
@@ -123,7 +120,7 @@ def test_normalising_is_idempotent() -> None:
         (FieldKind.DATE, "2026-10-23"),
         (FieldKind.DATE_RANGE, "2026-10-23/2026-10-28"),
         (FieldKind.MONEY, "74000 EUR"),
-        (FieldKind.DURATION, "2h"),
+        (FieldKind.DURATION, "90"),
     ):
         once = normalise(spec(kind), value)
         assert normalise(spec(kind), once) == once
@@ -158,10 +155,16 @@ def test_normalising_is_idempotent() -> None:
         (FieldKind.MONEY, {"amount_minor": 74000}, REASON_MONEY_WITHOUT_CURRENCY, {}),
         (FieldKind.MONEY, {"amount_minor": 74000, "currency": "euro"}, REASON_NOT_MONEY, {}),
         (FieldKind.MONEY, "74000 EUR extra", REASON_NOT_MONEY, {}),
+        (FieldKind.MONEY, "EUR 74000", REASON_NOT_MONEY, {}),
+        (FieldKind.MONEY, "74000,EUR", REASON_MONEY_WITHOUT_CURRENCY, {}),
         (FieldKind.MONEY, None, REASON_NOT_MONEY, {}),
         (FieldKind.BOOLEAN, "maybe", REASON_NOT_A_BOOLEAN, {}),
+        (FieldKind.BOOLEAN, "yes", REASON_NOT_A_BOOLEAN, {}),
+        (FieldKind.BOOLEAN, "1", REASON_NOT_A_BOOLEAN, {}),
         (FieldKind.BOOLEAN, 1, REASON_NOT_A_BOOLEAN, {}),
         (FieldKind.DURATION, "a while", REASON_NOT_A_DURATION, {}),
+        (FieldKind.DURATION, "2h", REASON_NOT_A_DURATION, {}),
+        (FieldKind.DURATION, "1d", REASON_NOT_A_DURATION, {}),
         (FieldKind.DURATION, True, REASON_NOT_A_DURATION, {}),
         (FieldKind.DURATION, None, REASON_NOT_A_DURATION, {}),
         (FieldKind.DURATION, 500, REASON_ABOVE_MAXIMUM, {"constraints": {"max": 240}}),
@@ -207,13 +210,17 @@ def test_a_bound_is_rendered_the_way_it_was_written() -> None:
     assert "above the maximum 10" in raised.value.detail
 
 
-def test_invalid_reason_answers_the_same_question_without_raising() -> None:
+def test_a_refusal_carries_everything_a_gap_report_finding_needs() -> None:
+    """`analyse()` builds an Invalid Value straight from this exception, field name included."""
     bounded = spec(FieldKind.SCORE, "min_rating", constraints={"min": 0, "max": 10})
 
-    assert invalid_reason(bounded, 8.7) is None
-    reason = invalid_reason(bounded, 99)
-    assert reason is not None
-    assert reason[0] == REASON_ABOVE_MAXIMUM
+    assert normalise(bounded, 8.7) == 8.7
+    with pytest.raises(RequirementValueError) as raised:
+        normalise(bounded, 99)
+
+    assert raised.value.field_name == "min_rating"
+    assert raised.value.reason_message_key == REASON_ABOVE_MAXIMUM
+    assert raised.value.detail
 
 
 def test_a_long_offending_value_is_truncated_in_the_detail() -> None:

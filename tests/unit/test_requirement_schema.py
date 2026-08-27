@@ -109,6 +109,21 @@ def test_a_blocking_field_no_rule_references_is_a_problem() -> None:
     )
 
 
+def test_a_schema_of_filters_alone_has_nothing_to_gate_planning() -> None:
+    """Every field optional and no rule: Plannable on turn one, sourced against nothing."""
+    filters_only = RequirementSchema("alpha.v1", "alpha", (STARTS, ENDS))
+
+    assert schema_problems(filters_only) == (
+        "the schema declares fields but no blocking rule, so nothing has to be known "
+        "before planning starts",
+    )
+
+
+def test_a_schema_that_declares_no_fields_at_all_is_left_alone() -> None:
+    """Nothing to know is only a problem when the schema says there *is* something to know."""
+    assert schema_problems(RequirementSchema("alpha.v1", "alpha")) == ()
+
+
 def test_duplicate_names_are_reported_once_each() -> None:
     broken = RequirementSchema(
         "alpha.v1",
@@ -182,19 +197,41 @@ def test_enum_values_may_not_repeat() -> None:
 @pytest.mark.parametrize(
     ("constraints", "kind", "reason"),
     [
-        ({"minimum": 1}, FieldKind.INTEGER, "unknown constraint(s) minimum"),
         ({"min": "one"}, FieldKind.INTEGER, "constraint min must be a number"),
+        ({"min": True}, FieldKind.INTEGER, "constraint min must be a number"),
         ({"min": 5, "max": 1}, FieldKind.INTEGER, "constraint min 5 is above max 1"),
-        ({"min": 1}, FieldKind.PLACE, "constraints are only read on"),
     ],
 )
 def test_a_malformed_constraint_is_refused(
     constraints: dict[str, object], kind: FieldKind, reason: str
 ) -> None:
+    """The constraints this release *understands* are still checked."""
     with pytest.raises(InvariantViolationError) as raised:
         field("bounded", kind, constraints=constraints)
 
     assert reason in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("constraints", "kind"),
+    [
+        ({"step": 15}, FieldKind.INTEGER),
+        ({"pattern": "[A-Z]{3}"}, FieldKind.TEXT),
+        ({"min": 1}, FieldKind.PLACE),
+    ],
+)
+def test_a_constraint_this_release_does_not_read_is_carried_not_refused(
+    constraints: dict[str, object], kind: FieldKind
+) -> None:
+    """Adding a Field Kind is additive: a bound it reads must not break older loaders.
+
+    `constraints` is `Mapping[str, object]` by contract — an open bag. A key nobody here reads
+    is inert, and so is a bound on a kind that does not consume it; refusing either would make
+    every schema file already written a hostage to the next Field Kind.
+    """
+    spec = field("bounded", kind, constraints=constraints)
+
+    assert dict(spec.constraints) == constraints
 
 
 def test_constraints_are_read_only_and_reachable_by_key() -> None:

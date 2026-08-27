@@ -14,9 +14,14 @@ and :mod:`~tourganize.domain.requirements.gaps` reports what is still missing.
 
 from __future__ import annotations
 
-from tourganize.domain.requirements.gaps import BlockingGap, GapReport, InvalidValue, analyse
+from tourganize.domain.requirements.gaps import (
+    BlockingGap,
+    CandidateGroup,
+    GapReport,
+    InvalidValue,
+    analyse,
+)
 from tourganize.domain.requirements.schema import (
-    BOUNDED_FIELD_KINDS,
     CONSTRAINT_KEYS,
     FIELD_NAME_PATTERN,
     BlockingRule,
@@ -30,7 +35,6 @@ from tourganize.domain.requirements.validation import (
     REASON_MESSAGE_KEYS,
     VALIDATORS,
     DateRange,
-    invalid_reason,
     normalise,
 )
 from tourganize.domain.requirements.values import (
@@ -39,10 +43,11 @@ from tourganize.domain.requirements.values import (
     RequirementSource,
     RequirementUpdate,
     RequirementValue,
+    SupersededValue,
+    Supersession,
 )
 
 __all__ = [
-    "BOUNDED_FIELD_KINDS",
     "CONSTRAINT_KEYS",
     "FIELD_NAME_PATTERN",
     "PRECEDENCE",
@@ -50,6 +55,7 @@ __all__ = [
     "VALIDATORS",
     "BlockingGap",
     "BlockingRule",
+    "CandidateGroup",
     "DateRange",
     "FieldKind",
     "FieldSpec",
@@ -61,8 +67,9 @@ __all__ = [
     "RequirementSource",
     "RequirementUpdate",
     "RequirementValue",
+    "SupersededValue",
+    "Supersession",
     "analyse",
-    "invalid_reason",
     "normalise",
     "schema_problems",
 ]

@@ -50,8 +50,10 @@ From F02: `ComponentKind.schema_key`, `PlanComponent.requirements: RequirementSe
      `requirements_digest`, and `provenance_of(name)`.
    - Merge precedence when a later turn contradicts an earlier value: `USER` overwrites anything;
      `INFERRED` overwrites only `DEFAULT`/`CARRIED_OVER`; a same-source update always wins by turn
-     index (later turn wins). Contradictions are recorded, not silently dropped:
-     `RequirementSet.superseded` keeps the replaced values so a refinement can be explained.
+     index (later turn wins — and a value arriving on the *same* turn wins too, because two values
+     for one field in one turn are a correction in mid-sentence). Contradictions are recorded, not
+     silently dropped: `RequirementSet.superseded` keeps the replaced values so a refinement can be
+     explained, each entry saying **how** the value stopped being in force (see the Contract).
 4. **Validation and normalisation** (`tourganize/domain/requirements/validation.py`) — per `FieldKind`,
    pure functions: date ranges must have `end >= start`; a `score` must sit inside its constraints;
    `money` must carry a currency; a `place` is normalised to a trimmed, case-preserved string (real
@@ -63,10 +65,18 @@ From F02: `ComponentKind.schema_key`, `PlanComponent.requirements: RequirementSe
    `analyse(schema, requirement_set) -> GapReport` with `blocking` (unsatisfied `BlockingRule` groups,
    each carrying the candidate field sets that would satisfy it), `optional` (declared optional fields
    with no value), `invalid` (values present but failing validation) and `is_plannable`
-   (`not blocking and not invalid`).
+   (nothing blocking is missing, and no value a `BlockingRule` *reads* is invalid).
+   > **Reconciliation.** This feature first said `is_plannable = not blocking and not invalid`, which
+   > would let an unusable *optional filter* hold sourcing up. CLAUDE.md's standing invariant —
+   > "blocking gaps are resolved before sourcing; **optional filters never block**" — governs, so an
+   > invalid optional value is still listed in `invalid` and still re-asked, alongside the first slate
+   > rather than instead of it. Each `InvalidValue` therefore carries `blocks`, true when a
+   > `BlockingRule` reads its field.
 6. **Ask ordering** — `GapReport.next_blocking()` returns the single most useful blocking gap to ask
    about, ordered by schema declaration order. One question at a time is the dialogue's job (F05), but
-   the *ordering* is a domain fact and lives here.
+   the *ordering* is a domain fact and lives here. Only that ordering: *which* of a rule's candidate
+   groups to pursue, and which field of it to ask for, is asking policy and is F05's — each group
+   arrives carrying its own still-missing fields, which is everything a policy needs.
 7. **CLI** — `tourganize catalog gaps --kind <k> [--set <json>]` printing the Gap Report; extends
    `catalog validate` to validate all schema files too.
 
@@ -122,18 +132,18 @@ blocking_rules:
 @dataclass(frozen=True)
 class GapReport:
     component_kind: str
-    blocking: tuple[BlockingGap, ...]     # each: rule name + candidate field groups + message keys
+    blocking: tuple[BlockingGap, ...]     # each: rule name + candidate groups (fields + missing)
     optional: tuple[FieldSpec, ...]
-    invalid: tuple[InvalidValue, ...]
+    invalid: tuple[InvalidValue, ...]     # each carries `blocks`: does a BlockingRule read it?
     @property
-    def is_plannable(self) -> bool: ...
+    def is_plannable(self) -> bool: ...   # not blocking and no *blocking* value invalid
     def next_blocking(self) -> BlockingGap | None: ...
 
 @dataclass(frozen=True)
 class RequirementSet:
     component_kind: str
     values: Mapping[str, RequirementValue]
-    superseded: tuple[RequirementValue, ...] = ()
+    superseded: tuple[SupersededValue, ...] = ()   # each: the value + REPLACED or OVERRULED
     def with_updates(
         self, updates: Sequence[RequirementUpdate], *, schema: RequirementSchema
     ) -> "RequirementSet": ...
@@ -141,12 +151,25 @@ class RequirementSet:
     def provenance_of(self, field_name: str) -> RequirementValue | None: ...
 ```
 
-The schema is a *parameter* of `with_updates` rather than a field of the set: a set is small,
-copied every turn and persisted by F12, while a schema is shared, versioned and loaded from a file —
-and passing it in is what lets the merge raise `UnknownFieldError` for a field nobody declared, which
-the Replaceability notes require. `with_updates` normalises what it can and stores what it cannot
-verbatim: an *invalid* value has to survive into the set, or `GapReport.invalid` would have nothing
-to report and the dialogue nothing to re-ask about.
+`with_updates` takes the schema as a *parameter* rather than the set holding one as a field: a set is
+small, copied every turn and persisted by F12, while a schema is shared, versioned and loaded from a
+file, and a persisted set that carried a schema would be persisting a copy of a file. The merge needs
+the schema because it **normalises** — what a value's normalised form is, is a fact about its Field
+Spec — and, being there, it also refuses a field the schema does not declare. Neither is exclusive to
+this signature: a module-level `merge(schema, set, updates)`, or a check when the update is built,
+would raise `UnknownFieldError` just as well. Recorded as
+[D14](../architecture/decisions.md) because it amends this Contract block.
+
+`with_updates` normalises what it can and stores what it cannot verbatim: an *invalid* value has to
+survive into the set, or `GapReport.invalid` would have nothing to report and the dialogue nothing to
+re-ask about.
+
+`superseded` keeps **both** kinds of loser, and says which is which. A value that was held and was
+pushed out is `replaced`; a value that arrived and never took hold because the standing value
+outranked it is `overruled`. Both are kept — "we heard you, but your earlier answer stands" is a thing
+the dialogue may need to say — and they are distinguishable, because F05 explaining a refinement from
+a value the traveller never actually held would be a lie. One history, in the order the contradictions
+happened.
 
 **Ports consumed:** `ComponentCatalog` (F02) for `schema_for(kind_key)`.
 
@@ -193,10 +216,13 @@ fields raise.
       constraints, money with no currency), and each `RequirementValueError` names its field.
 - [ ] Merge precedence is tested for all four sources, including that a `USER` value overwrites an
       `INFERRED` one, an `INFERRED` value does **not** overwrite a `USER` one, and the replaced value
-      appears in `superseded`.
+      appears in `superseded` — as `REPLACED`, distinguishable from the `OVERRULED` entry the losing
+      incoming value leaves.
 - [ ] `RequirementSet.with_updates` is proven not to mutate the receiver (identity and content check).
 - [ ] `analyse()` returns `invalid` (not `blocking`) for a present-but-invalid blocking value, and
-      `is_plannable` is false in that case.
+      `is_plannable` is false in that case — while an invalid *optional filter* is reported with
+      `blocks = false` and leaves `is_plannable` true.
+- [ ] `digest()` is proven not to collide for `{"a": "b\nc=d"}` against `{"a": "b", "c": "d"}`.
 - [ ] Adding a new optional field to `lodging.v1` requires no Python change; a test with a fixture schema
       proves it.
 - [ ] `mypy --strict`, `ruff`, `lint-imports` pass; `tourganize doctor` and `catalog show` still work.

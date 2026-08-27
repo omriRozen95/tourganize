@@ -46,11 +46,14 @@ differ from the real adapter's.** Same fields, same errors, same ordering guaran
 - `option_factory(option_id, kind_key="alpha", *, price=None, **facts)` — a `PlanOption` with
   plausible Provenance, so a test names only what it is about.
 - `write_catalog(config_dir, text=SAMPLE_CATALOG)`, `write_schemas(config_dir,
-  schemas=SAMPLE_SCHEMAS)` and their sample constants are plain functions, imported as
-  `from conftest import write_catalog` by the tests that need a *broken* catalog or schema.
-  `tests` is on `pythonpath` in `pyproject.toml` so that import does not depend on
-  pytest's import mode; the same mechanism is what lets `tests/architecture` import
+  schemas=SAMPLE_SCHEMAS)`, `schemas_dir(config_dir)` and their sample constants are plain
+  functions, imported as `from conftest import write_catalog` by the tests that need a *broken*
+  catalog or schema. `tests` is on `pythonpath` in `pyproject.toml` so that import does not
+  depend on pytest's import mode; the same mechanism is what lets `tests/architecture` import
   `boundaries`.
+- `schemas_dir(config_dir)` is the documented `TOURGANIZE_SCHEMA_DIR` default. The YAML adapter
+  is handed its schema directory and has no fallback of its own, so a test that builds one by
+  hand has to say where the schemas are — and should say it the same way everywhere.
 
 Catalog fixtures use neutral `kind_key`s — `alpha`, `beta`, `gamma` — rather than the shipped
 travel topics. A test about the machinery should not have to name a topic, and it keeps the

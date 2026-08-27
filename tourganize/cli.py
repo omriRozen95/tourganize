@@ -173,15 +173,12 @@ def main(
     try:
         if command == "doctor":
             return _doctor(settings, env, out=out)
-        if command == "catalog":
-            return _catalog(
-                build_container(settings),
-                args.catalog_command,
-                kind_key=getattr(args, "kind", ""),
-                values=getattr(args, "values", None),
-                out=out,
-                err=err,
+        if command == "catalog" and args.catalog_command == "gaps":
+            return _catalog_gaps(
+                build_container(settings), kind_key=args.kind, values=args.values, out=out, err=err
             )
+        if command == "catalog":
+            return _catalog(build_container(settings), args.catalog_command, out=out, err=err)
     except ConfigurationError as exc:
         print(f"configuration error: {exc}", file=err)
         return EXIT_CONFIGURATION_ERROR
@@ -197,25 +194,18 @@ def _doctor(settings: Settings, env: Mapping[str, str], *, out: TextIO) -> int:
     return EXIT_OK if report.ok else EXIT_DOCTOR_FAILED
 
 
-def _catalog(
-    container: Container,
-    action: str | None,
-    *,
-    kind_key: str,
-    values: str | None,
-    out: TextIO,
-    err: TextIO,
-) -> int:
-    """``catalog show``, ``validate`` and ``gaps``. All three load the catalog for real.
+def _catalog(container: Container, action: str | None, *, out: TextIO, err: TextIO) -> int:
+    """``catalog show`` and ``validate``. Both load the catalog for real.
 
-    The action is checked before the file is read, so ``tourganize catalog`` with no action
-    says what it offers rather than reporting whatever is wrong with the catalog.
+    ``gaps`` is dispatched by :func:`main`, which is where its two arguments exist; this
+    function would otherwise have to reach for arguments three quarters of its callers never
+    pass. The action is still checked here, before the file is read, so ``tourganize catalog``
+    with no action says what it offers rather than reporting whatever is wrong with the
+    catalog.
     """
     if action not in CATALOG_ACTIONS:
         print(f"tourganize catalog needs an action: {', '.join(CATALOG_ACTIONS)}", file=err)
         return EXIT_NOT_IMPLEMENTED
-    if action == "gaps":
-        return _catalog_gaps(container, kind_key=kind_key, values=values, out=out, err=err)
 
     kinds = container.component_catalog.kinds()
     origin = container.settings.catalog_path
@@ -278,6 +268,10 @@ def _requirements_from(schema: RequirementSchema, values: str | None) -> Require
     Every value is recorded as coming from the traveller on turn zero, because that is what a
     value typed at a prompt is. Values that fail their field's validation are kept, not
     refused: the Gap Report is where they are reported, under ``invalid``.
+
+    No ``raw_text``: that field holds the traveller's *own words*, and a JSON fragment typed at
+    a shell prompt is not them. Re-serialising the value into it would give F05 something to
+    quote back that nobody ever said.
     """
     empty = RequirementSet.empty(schema.component_kind)
     if values is None:
@@ -289,8 +283,7 @@ def _requirements_from(schema: RequirementSchema, values: str | None) -> Require
     if not isinstance(supplied, dict):
         raise ValueError(f"must be a JSON object of field names to values, got {supplied!r}")
     updates = [
-        RequirementUpdate(field_name=str(name), value=value, raw_text=json.dumps(value))
-        for name, value in supplied.items()
+        RequirementUpdate(field_name=str(name), value=value) for name, value in supplied.items()
     ]
     return empty.with_updates(updates, schema=schema)
 
@@ -306,12 +299,12 @@ def _render_gaps(report: GapReport, schema: RequirementSchema) -> str:
     ]
     lines += _indented(
         _table(
-            ("rule", "satisfied by", "next question"),
+            ("rule", "satisfied by", "questions"),
             [
                 (
                     gap.rule_name,
                     "  |  ".join(" + ".join(group) for group in gap.field_names),
-                    gap.next_field().prompt_message_key,
+                    ", ".join(gap.prompt_message_keys),
                 )
                 for gap in report.blocking
             ],
@@ -330,8 +323,16 @@ def _render_gaps(report: GapReport, schema: RequirementSchema) -> str:
     lines += ["", f"invalid ({len(report.invalid)}):"]
     lines += _indented(
         _table(
-            ("field", "reason", "detail"),
-            [(bad.field_name, bad.reason_message_key, bad.detail) for bad in report.invalid],
+            ("field", "blocks", "reason", "detail"),
+            [
+                (
+                    bad.field_name,
+                    "yes" if bad.blocks else "no",
+                    bad.reason_message_key,
+                    bad.detail,
+                )
+                for bad in report.invalid
+            ],
         )
     )
     return "\n".join(line.rstrip() for line in lines)

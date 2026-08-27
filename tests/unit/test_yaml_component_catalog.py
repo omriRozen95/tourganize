@@ -5,11 +5,18 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from conftest import SAMPLE_CATALOG, write_catalog
+from conftest import SAMPLE_CATALOG, schemas_dir, write_catalog
 
 from tourganize.adapters.catalog.yaml import CATALOG_VERSION, YamlComponentCatalog
 from tourganize.domain.errors import UnknownComponentKindError
 from tourganize.platform.errors import CatalogError, ConfigurationError, SchemaError
+
+
+def shipped_paths() -> tuple[Path, Path]:
+    """The catalog and schema directory the application ships with, as Settings resolves them."""
+    config = Path("config")
+    return config / "catalog" / "components.yaml", schemas_dir(config)
+
 
 VALID_KIND = (
     "  - kind_key: alpha\n"
@@ -20,12 +27,13 @@ VALID_KIND = (
 
 
 def catalog_from(text: str, tmp_path: Path) -> YamlComponentCatalog:
-    return YamlComponentCatalog(write_catalog(tmp_path / "config", text))
+    config = tmp_path / "config"
+    return YamlComponentCatalog(write_catalog(config, text), schemas_dir(config))
 
 
 def test_the_shipped_catalog_loads() -> None:
     """The file in this repository is the one the application actually ships with."""
-    catalog = YamlComponentCatalog(Path("config") / "catalog" / "components.yaml")
+    catalog = YamlComponentCatalog(*shipped_paths())
 
     kinds = catalog.kinds()
 
@@ -93,7 +101,7 @@ def test_the_file_is_read_once_and_cached(tmp_path: Path) -> None:
 
 def test_the_file_is_not_read_before_it_is_asked_for(tmp_path: Path) -> None:
     """`doctor` has to be able to report a broken catalog rather than die building it."""
-    catalog = YamlComponentCatalog(tmp_path / "never-written.yaml")
+    catalog = YamlComponentCatalog(tmp_path / "never-written.yaml", tmp_path / "schemas")
 
     assert catalog.origin.endswith("never-written.yaml")
     with pytest.raises(CatalogError):
@@ -202,7 +210,7 @@ def test_the_catalog_invariants_are_enforced_at_load(tmp_path: Path) -> None:
 
 def test_a_catalog_error_is_a_configuration_error_so_the_cli_exits_3(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError):
-        YamlComponentCatalog(tmp_path / "absent.yaml").kinds()
+        YamlComponentCatalog(tmp_path / "absent.yaml", tmp_path / "schemas").kinds()
 
 
 def test_a_syntax_error_in_the_file_names_the_line(tmp_path: Path) -> None:

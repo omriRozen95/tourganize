@@ -10,6 +10,7 @@ from tourganize.domain.errors import InvariantViolationError
 from tourganize.domain.requirements import (
     BlockingGap,
     BlockingRule,
+    CandidateGroup,
     FieldKind,
     FieldSpec,
     GapReport,
@@ -18,6 +19,7 @@ from tourganize.domain.requirements import (
     RequirementSet,
     RequirementUpdate,
     analyse,
+    schema_problems,
 )
 from tourganize.domain.requirements.validation import (
     REASON_ABOVE_MAXIMUM,
@@ -94,14 +96,14 @@ def test_half_of_the_pair_does_not_satisfy_the_rule() -> None:
     assert not report.is_plannable
 
 
-def test_a_partly_filled_group_is_the_one_the_next_question_comes_from() -> None:
-    """A traveller who gave a start date is asked for the end, not sent back to the range."""
+def test_a_partly_filled_group_reports_only_what_is_still_missing_from_it() -> None:
+    """*Which* group to pursue is F05's asking policy; the gap hands over both, in file order."""
     gap = analyse(SCHEMA, given(place="Paris", starts_on="2026-10-23")).next_blocking()
 
     assert gap is not None
-    assert [spec.name for spec in gap.nearest_candidate()] == ["starts_on", "ends_on"]
-    assert gap.next_field() is ENDS
-    assert gap.prompt_message_keys == ("ask.alpha.ends_on", "ask.alpha.date_range")
+    assert gap.field_names == (("date_range",), ("starts_on", "ends_on"))
+    assert [group.missing for group in gap.candidates] == [("date_range",), ("ends_on",)]
+    assert gap.prompt_message_keys == ("ask.alpha.date_range", "ask.alpha.ends_on")
 
 
 def test_a_blocking_gap_carries_every_candidate_group() -> None:
@@ -110,8 +112,11 @@ def test_a_blocking_gap_carries_every_candidate_group() -> None:
     assert gap is not None
     assert gap.rule_name == "when"
     assert gap.field_names == (("date_range",), ("starts_on", "ends_on"))
-    assert gap.missing == (("date_range",), ("starts_on", "ends_on"))
-    assert gap.next_field() is RANGE
+    assert [group.missing for group in gap.candidates] == [
+        ("date_range",),
+        ("starts_on", "ends_on"),
+    ]
+    assert gap.candidates[0].missing_fields == (RANGE,)
 
 
 def test_next_blocking_follows_the_schemas_declaration_order() -> None:
@@ -139,7 +144,8 @@ def test_a_present_but_invalid_blocking_value_is_invalid_not_blocking() -> None:
     assert not report.is_plannable
 
 
-def test_an_invalid_optional_value_also_blocks_planning() -> None:
+def test_an_invalid_optional_value_is_reported_but_never_blocks_planning() -> None:
+    """Optional filters never block — the bad one is re-asked *alongside* the first slate."""
     report = analyse(
         SCHEMA, given(place="Paris", date_range="2026-10-23/2026-10-28", min_rating=99)
     )
@@ -147,6 +153,18 @@ def test_an_invalid_optional_value_also_blocks_planning() -> None:
     assert report.blocking == ()
     assert report.invalid_field_names == ("min_rating",)
     assert report.invalid[0].reason_message_key == REASON_ABOVE_MAXIMUM
+    assert not report.invalid[0].blocks
+    assert report.blocking_invalid == ()
+    assert report.is_plannable
+
+
+def test_an_invalid_value_a_blocking_rule_reads_does_block_planning() -> None:
+    """`starts_on` is an optional *field*, but the `when` rule reads it: a bad one gates."""
+    report = analyse(SCHEMA, given(place="Paris", starts_on="the 23rd", ends_on="2026-10-28"))
+
+    assert report.blocking == ()
+    assert report.invalid_field_names == ("starts_on",)
+    assert report.invalid[0].blocks
     assert not report.is_plannable
 
 
@@ -173,13 +191,15 @@ def test_a_schema_with_no_rules_blocks_on_each_blocking_field() -> None:
     assert report.optional_field_names == ("party_size",)
 
 
-def test_a_schema_with_no_blocking_fields_is_plannable_from_the_start() -> None:
+def test_a_schema_of_filters_alone_is_refused_at_load_though_analyse_still_answers() -> None:
+    """Nothing would gate planning, so it would be sourced against an empty Requirement Set."""
     filters_only = RequirementSchema("alpha.v1", "alpha", (PARTY, RATING))
 
     report = analyse(filters_only, RequirementSet.empty("alpha"))
 
-    assert report.is_plannable
+    assert report.is_plannable  # pure and total: it answers for any schema handed to it
     assert report.optional_field_names == ("party_size", "min_rating")
+    assert schema_problems(filters_only)  # ... but no adapter would ever hand it one
 
 
 def test_adding_an_optional_field_to_a_schema_needs_no_python_change() -> None:
@@ -221,7 +241,7 @@ def test_a_rule_naming_an_undeclared_field_is_refused_rather_than_skipped() -> N
 
 def test_a_gap_with_a_fully_present_group_is_not_a_gap() -> None:
     with pytest.raises(InvariantViolationError) as raised:
-        BlockingGap("when", ((RANGE,), (STARTS, ENDS)), (("date_range",), ()))
+        CandidateGroup((STARTS, ENDS), ())
 
     assert "not a gap" in str(raised.value)
 
@@ -231,11 +251,19 @@ def test_a_gap_report_needs_a_component_kind() -> None:
         GapReport("")
 
 
-def test_a_gap_reports_candidates_and_missing_in_step() -> None:
+def test_a_group_cannot_be_missing_a_field_it_does_not_contain() -> None:
+    """Fields and their missing names travel together, so they cannot drift out of step."""
     with pytest.raises(InvariantViolationError) as raised:
-        BlockingGap("when", ((RANGE,),), (("date_range",), ("starts_on",)))
+        CandidateGroup((RANGE,), ("starts_on",))
 
-    assert "the same length" in str(raised.value)
+    assert "which the group does not contain" in str(raised.value)
+
+
+def test_a_rule_with_no_candidate_group_could_never_be_satisfied() -> None:
+    with pytest.raises(InvariantViolationError) as raised:
+        BlockingGap("when", ())
+
+    assert "never" in str(raised.value)
 
 
 def test_a_normalised_value_reaches_the_report_normalised() -> None:

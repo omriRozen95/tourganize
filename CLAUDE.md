@@ -31,7 +31,7 @@ The next thing to build is `docs/features/F04-component-prioritization-policy.md
 2. `docs/architecture/glossary.md` — the ubiquitous language. **Authoritative on naming.**
 3. `docs/architecture/overview.md` — contexts, ports, per-turn data flow, C1–C14 traceability, open
    client questions.
-4. `docs/architecture/decisions.md` — D1–D13, each with cost and reversal path.
+4. `docs/architecture/decisions.md` — D1–D14, each with cost and reversal path.
 5. The one feature file you are implementing, plus the files of its declared dependencies.
 
 A feature file is designed to be self-sufficient: implement from its Scope and Contract sections, and

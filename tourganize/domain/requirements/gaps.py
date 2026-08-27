@@ -16,26 +16,31 @@ Three lists come out, and the difference between two of them is the subtle part:
 * ``optional`` — declared optional fields with no value. These are filters. They are never
   blocking, they are asked at most once, and they are bundled alongside the first slate (F05).
 
-``is_plannable`` is ``not blocking and not invalid``, and it is *the* gate: sourcing starts
-when it is true and elicitation continues while it is false.
+``is_plannable`` is *the* gate: sourcing starts when it is true and elicitation continues
+while it is false. It is false while any Blocking Rule is unsatisfied, and false while a value
+that a Blocking Rule *reads* is invalid — a rule satisfied by a date nobody can parse would
+send an empty search out. An invalid **optional filter** does not hold planning up, because
+"optional filters never block" is a hard rule of this system: it is still reported, and still
+re-asked, alongside the first slate rather than instead of it.
 
 Ask ordering lives here rather than in the dialogue because it is a fact about the schema, not
 about the conversation: gaps come back in the schema's Blocking Rule declaration order, so
-:meth:`GapReport.next_blocking` is simply the first of them. What the dialogue does with one
-gap per turn is F05's business.
+:meth:`GapReport.next_blocking` is simply the first of them. *Which* of a rule's candidate
+groups to pursue, and which field of it to ask for, is asking policy and belongs to F05 — this
+module hands it every group with its own missing fields and stops there.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tourganize.domain.errors import InvariantViolationError
+from tourganize.domain.errors import InvariantViolationError, RequirementValueError
 from tourganize.domain.invariants import require_text
 from tourganize.domain.requirements.schema import FieldSpec, RequirementSchema
-from tourganize.domain.requirements.validation import invalid_reason
+from tourganize.domain.requirements.validation import normalise
 from tourganize.domain.requirements.values import RequirementSet
 
-__all__ = ["BlockingGap", "GapReport", "InvalidValue", "analyse"]
+__all__ = ["BlockingGap", "CandidateGroup", "GapReport", "InvalidValue", "analyse"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,83 +49,100 @@ class InvalidValue:
 
     ``reason_message_key`` is what the traveller is told, in their own language. ``detail`` is
     English and diagnostic — it belongs in a log line or a CLI report, never in an Assistant
-    Act payload.
+    Act payload. ``blocks`` says whether planning waits for it: true when a Blocking Rule
+    reads this field, false when it is only a filter.
     """
 
     field_name: str
     reason_message_key: str
     detail: str
+    blocks: bool
 
     def __post_init__(self) -> None:
         require_text(self.field_name, "InvalidValue.field_name")
         require_text(self.reason_message_key, "InvalidValue.reason_message_key")
+        if not isinstance(self.blocks, bool):
+            raise InvariantViolationError(
+                f"{self.field_name}: blocks must be true or false, got {self.blocks!r}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateGroup:
+    """One way a Blocking Rule could be satisfied, and what is still missing from it.
+
+    The fields and their missing names travel together rather than as two lists the caller
+    has to keep in step: a group whose ``missing`` belonged to a different group is a bug that
+    cannot be written here.
+    """
+
+    fields: tuple[FieldSpec, ...]
+    missing: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.fields) is not tuple or not self.fields:
+            raise InvariantViolationError(
+                f"a candidate group must name at least one field, got {self.fields!r}"
+            )
+        if type(self.missing) is not tuple or not self.missing:
+            raise InvariantViolationError(
+                "a candidate group with nothing missing satisfies its rule, so it is not a gap"
+            )
+        declared = {spec.name for spec in self.fields}
+        unknown = sorted(name for name in self.missing if name not in declared)
+        if unknown:
+            raise InvariantViolationError(
+                f"candidate group {sorted(declared)}: missing names {', '.join(unknown)}, "
+                f"which the group does not contain"
+            )
+
+    @property
+    def field_names(self) -> tuple[str, ...]:
+        """Every field of this group, in the order the rule declares them."""
+        return tuple(spec.name for spec in self.fields)
+
+    @property
+    def missing_fields(self) -> tuple[FieldSpec, ...]:
+        """The Field Specs of this group that still hold no value, in declaration order."""
+        return tuple(spec for spec in self.fields if spec.name in self.missing)
 
 
 @dataclass(frozen=True, slots=True)
 class BlockingGap:
     """One unsatisfied Blocking Rule, and every combination that would satisfy it.
 
-    ``candidates`` and ``missing`` are parallel: ``candidates[i]`` is the ``i``-th group of the
-    rule as Field Specs, and ``missing[i]`` names the fields of that group that still hold no
-    value. Every group has at least one missing field — that is what makes the rule a gap.
+    Every group has at least one missing field — that is what makes the rule a gap. The groups
+    are in the schema's declaration order, and stay in it: preferring the group a traveller has
+    half-answered is an asking policy, and asking policy is F05's.
     """
 
     rule_name: str
-    candidates: tuple[tuple[FieldSpec, ...], ...]
-    missing: tuple[tuple[str, ...], ...]
+    candidates: tuple[CandidateGroup, ...]
 
     def __post_init__(self) -> None:
         require_text(self.rule_name, "BlockingGap.rule_name")
-        if not self.candidates or len(self.candidates) != len(self.missing):
+        if type(self.candidates) is not tuple or not self.candidates:
             raise InvariantViolationError(
-                f"blocking gap {self.rule_name!r}: candidates and missing must be non-empty "
-                f"and the same length, got {len(self.candidates)} and {len(self.missing)}"
-            )
-        if any(not names for names in self.missing):
-            raise InvariantViolationError(
-                f"blocking gap {self.rule_name!r}: a group with nothing missing satisfies the "
-                f"rule, so it is not a gap"
+                f"blocking gap {self.rule_name!r}: a rule with no candidate group could never "
+                f"be satisfied, got {self.candidates!r}"
             )
 
     @property
     def field_names(self) -> tuple[tuple[str, ...], ...]:
         """The candidate field groups by name — what F05 stores on its pending question."""
-        return tuple(tuple(spec.name for spec in group) for group in self.candidates)
+        return tuple(group.field_names for group in self.candidates)
 
     @property
     def prompt_message_keys(self) -> tuple[str, ...]:
-        """The question key of every field still missing, nearest group first, deduplicated."""
+        """The question key of every field still missing, in declaration order, deduplicated."""
         keys: list[str] = []
-        for index in self._by_distance():
-            for spec in self.candidates[index]:
-                if spec.name in self.missing[index] and spec.prompt_message_key not in keys:
-                    keys.append(spec.prompt_message_key)
+        for group in self.candidates:
+            keys += [
+                spec.prompt_message_key
+                for spec in group.missing_fields
+                if spec.prompt_message_key not in keys
+            ]
         return tuple(keys)
-
-    def nearest_candidate(self) -> tuple[FieldSpec, ...]:
-        """The group closest to being satisfied.
-
-        Nearest rather than simply first, because a traveller who has already answered half of
-        one group should be asked for the other half, not sent back to an alternative they
-        chose not to give. Ordered by: fewest fields still missing, then most fields already
-        answered, then the order the schema declares the groups in.
-        """
-        return self.candidates[self._by_distance()[0]]
-
-    def next_field(self) -> FieldSpec:
-        """The single field to ask about: the first missing one of the nearest group."""
-        index = self._by_distance()[0]
-        missing = self.missing[index]
-        return next(spec for spec in self.candidates[index] if spec.name in missing)
-
-    def _by_distance(self) -> tuple[int, ...]:
-        """Candidate indices, nearest first. See :meth:`nearest_candidate` for the ordering."""
-
-        def distance(index: int) -> tuple[int, int, int]:
-            answered = len(self.candidates[index]) - len(self.missing[index])
-            return len(self.missing[index]), -answered, index
-
-        return tuple(sorted(range(len(self.candidates)), key=distance))
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,8 +159,13 @@ class GapReport:
 
     @property
     def is_plannable(self) -> bool:
-        """True when sourcing may start: nothing blocking is missing and nothing present is bad."""
-        return not self.blocking and not self.invalid
+        """True when sourcing may start: nothing blocking is missing, nothing it reads is bad."""
+        return not self.blocking and not self.blocking_invalid
+
+    @property
+    def blocking_invalid(self) -> tuple[InvalidValue, ...]:
+        """The invalid values that hold planning up — the ones a Blocking Rule reads."""
+        return tuple(bad for bad in self.invalid if bad.blocks)
 
     def next_blocking(self) -> BlockingGap | None:
         """The single most useful blocking gap to ask about, or ``None`` when there is none."""
@@ -182,16 +209,16 @@ def analyse(schema: RequirementSchema, requirement_set: RequirementSet) -> GapRe
 def _blocking_gaps(schema: RequirementSchema, held: RequirementSet) -> tuple[BlockingGap, ...]:
     gaps: list[BlockingGap] = []
     for rule in schema.blocking_rules:
-        missing = tuple(tuple(name for name in group if name not in held) for group in rule.any_of)
-        if any(not names for names in missing):
-            continue  # one group is fully present: the rule is satisfied, however badly
-        gaps.append(
-            BlockingGap(
-                rule_name=rule.name,
-                candidates=tuple(_specs_of(schema, group) for group in rule.any_of),
-                missing=missing,
+        groups = [
+            CandidateGroup(
+                fields=_specs_of(schema, group),
+                missing=tuple(name for name in group if name not in held),
             )
-        )
+            for group in rule.any_of
+            if any(name not in held for name in group)
+        ]
+        if len(groups) == len(rule.any_of):  # every group is short of something
+            gaps.append(BlockingGap(rule_name=rule.name, candidates=tuple(groups)))
     return tuple(gaps)
 
 
@@ -211,12 +238,32 @@ def _specs_of(schema: RequirementSchema, group: tuple[str, ...]) -> tuple[FieldS
 
 def _invalid_values(schema: RequirementSchema, held: RequirementSet) -> tuple[InvalidValue, ...]:
     """Findings in schema declaration order, so a report reads the way the schema is written."""
+    gating = _gating_field_names(schema)
     findings: list[InvalidValue] = []
     for spec in schema.fields:
         value = held.provenance_of(spec.name)
         if value is None:
             continue
-        reason = invalid_reason(spec, value.value)
-        if reason is not None:
-            findings.append(InvalidValue(spec.name, reason[0], reason[1]))
+        try:
+            normalise(spec, value.value)
+        except RequirementValueError as refusal:
+            findings.append(
+                InvalidValue(
+                    field_name=refusal.field_name,
+                    reason_message_key=refusal.reason_message_key,
+                    detail=refusal.detail,
+                    blocks=spec.name in gating,
+                )
+            )
     return tuple(findings)
+
+
+def _gating_field_names(schema: RequirementSchema) -> frozenset[str]:
+    """The fields planning waits on: every one a Blocking Rule reads, plus every blocking field.
+
+    The two overlap in any schema that loads — ``schema_problems`` refuses a blocking field no
+    rule references — but a schema built in code need not have been through that check, and a
+    field the schema itself calls blocking must gate planning whatever the rules say.
+    """
+    referenced = {name for rule in schema.blocking_rules for name in rule.referenced_fields}
+    return frozenset(referenced | {spec.name for spec in schema.blocking_fields()})

@@ -18,6 +18,13 @@ Requirement Schemas (F03) are resolved the same way and cached the same way: a C
 names a ``schema_key``, and the schema is the file of that name under the schema directory.
 Reading one is :mod:`tourganize.adapters.catalog.yaml.yaml_schemas`; deciding *which* one,
 and checking that it agrees with the kind that asked for it, is here.
+
+Both paths are **required** arguments, with no fallback between them. ``TOURGANIZE_SCHEMA_DIR``
+has one documented default, ``${TOURGANIZE_CONFIG_DIR}/catalog/schemas``, and it is resolved
+in ``Settings.from_env`` like every other key. An adapter that also guessed "beside the
+catalog file" would be a second default that disagrees with the documented one the moment
+``TOURGANIZE_CATALOG_PATH`` points outside the config directory — and ``doctor`` would still
+print the setting, not the guess.
 """
 
 from __future__ import annotations
@@ -33,13 +40,7 @@ from tourganize.domain.requirements import RequirementSchema
 from tourganize.platform.errors import CatalogError, ConfigurationError, SchemaError
 from tourganize.platform.yaml_subset import read_config_file
 
-__all__ = ["CATALOG_VERSION", "SCHEMAS_DIRECTORY_NAME", "YamlComponentCatalog"]
-
-#: Where Requirement Schemas sit relative to the catalog file when nobody says otherwise —
-#: the same directory the documented ``TOURGANIZE_SCHEMA_DIR`` default resolves to. The
-#: Composition Root always passes ``Settings.schema_dir`` explicitly; this is the local
-#: default for a catalog constructed by hand, in a test or at a prompt.
-SCHEMAS_DIRECTORY_NAME: Final = "schemas"
+__all__ = ["CATALOG_VERSION", "YamlComponentCatalog"]
 
 #: The only catalog schema version this release understands. A file declaring anything else
 #: is refused rather than read hopefully: the shape may change, and a silent misreading of a
@@ -64,11 +65,9 @@ _REQUIRED_KIND_KEYS: Final = ("kind_key", "message_key", "priority_weight", "sch
 class YamlComponentCatalog:
     """The Component Catalog declared in ``${TOURGANIZE_CATALOG_PATH}``."""
 
-    def __init__(self, path: Path, schema_dir: Path | None = None) -> None:
+    def __init__(self, path: Path, schema_dir: Path) -> None:
         self._path = path
-        self._schema_dir = (
-            path.parent / SCHEMAS_DIRECTORY_NAME if schema_dir is None else schema_dir
-        )
+        self._schema_dir = schema_dir
         self._kinds: tuple[ComponentKind, ...] | None = None
         self._schemas: dict[str, RequirementSchema] = {}
 

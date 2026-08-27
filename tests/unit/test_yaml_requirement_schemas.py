@@ -5,11 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from conftest import SAMPLE_CATALOG, write_catalog, write_schemas
+from conftest import SAMPLE_CATALOG, schemas_dir, write_catalog, write_schemas
 
 from tourganize.adapters.catalog.yaml import YamlComponentCatalog, load_schema, schema_path
 from tourganize.domain.errors import UnknownComponentKindError
-from tourganize.domain.requirements import FieldKind, Obligation
+from tourganize.domain.requirements import (
+    FieldKind,
+    Obligation,
+    RequirementSet,
+    RequirementUpdate,
+    analyse,
+)
 from tourganize.platform.errors import CatalogError, ConfigurationError, SchemaError
 
 VALID_FIELD = (
@@ -22,7 +28,7 @@ HEADER = "schema_key: alpha.v1\ncomponent_kind: alpha\n"
 
 
 def write_schema(tmp_path: Path, text: str, schema_key: str = "alpha.v1") -> Path:
-    directory = tmp_path / "config" / "catalog" / "schemas"
+    directory = schemas_dir(tmp_path / "config")
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{schema_key}.yaml"
     path.write_text(text, encoding="utf-8")
@@ -30,13 +36,20 @@ def write_schema(tmp_path: Path, text: str, schema_key: str = "alpha.v1") -> Pat
 
 
 def catalog_of(tmp_path: Path, *, catalog: str = SAMPLE_CATALOG) -> YamlComponentCatalog:
-    write_schemas(tmp_path / "config")
-    return YamlComponentCatalog(write_catalog(tmp_path / "config", catalog))
+    config = tmp_path / "config"
+    write_schemas(config)
+    return YamlComponentCatalog(write_catalog(config, catalog), schemas_dir(config))
+
+
+def shipped_catalog() -> YamlComponentCatalog:
+    """The catalog and schemas this repository ships, read the way ``Settings`` resolves them."""
+    config = Path("config")
+    return YamlComponentCatalog(config / "catalog" / "components.yaml", schemas_dir(config))
 
 
 def test_the_shipped_schemas_load_and_agree_with_the_shipped_catalog() -> None:
     """The files in this repository are the ones the application actually ships with."""
-    catalog = YamlComponentCatalog(Path("config") / "catalog" / "components.yaml")
+    catalog = shipped_catalog()
 
     for kind in catalog.enabled_kinds():
         schema = catalog.schema_for(kind.kind_key)
@@ -44,6 +57,44 @@ def test_the_shipped_schemas_load_and_agree_with_the_shipped_catalog() -> None:
         assert schema.component_kind == kind.kind_key
         assert schema.fields
         assert schema.blocking_rules
+
+
+#: The client's own rule, in the client's own words: "there should be some time range, if not
+#: a specific start and end date". This is the one place a shipped topic and its field names
+#: are written down in a test on purpose — the Definition of Done names them, and a fixture
+#: schema shaped the same way would prove the machinery works without proving the file that
+#: ships is shaped the way the client asked for.
+CLIENT_RULE_KIND = "lodging"
+CLIENT_RULE = "when"
+CLIENT_RULE_PAIR = ("check_in", "check_out")
+
+
+def test_the_shipped_pair_satisfies_the_shipped_rule_without_a_range() -> None:
+    """`check_in` + `check_out` closes `when`; `check_in` alone does not."""
+    schema = shipped_catalog().schema_for(CLIENT_RULE_KIND)
+    empty = RequirementSet.empty(CLIENT_RULE_KIND)
+
+    both = empty.with_updates(
+        [
+            RequirementUpdate(CLIENT_RULE_PAIR[0], "2026-10-23"),
+            RequirementUpdate(CLIENT_RULE_PAIR[1], "2026-10-28"),
+        ],
+        schema=schema,
+    )
+    one = empty.with_updates([RequirementUpdate(CLIENT_RULE_PAIR[0], "2026-10-23")], schema=schema)
+
+    assert "date_range" not in both
+    assert CLIENT_RULE not in analyse(schema, both).blocking_rule_names
+    assert CLIENT_RULE in analyse(schema, one).blocking_rule_names
+
+
+def test_the_shipped_pair_is_the_only_way_the_rule_bends() -> None:
+    """The pair satisfies `when`; the fields either side of it still block on their own."""
+    schema = shipped_catalog().schema_for(CLIENT_RULE_KIND)
+    rule = schema.rule(CLIENT_RULE)
+
+    assert rule is not None
+    assert rule.any_of == (("date_range",), CLIENT_RULE_PAIR)
 
 
 def test_a_schema_is_read_verbatim(tmp_path: Path) -> None:
@@ -84,10 +135,13 @@ def test_a_schema_is_read_once_and_cached(tmp_path: Path) -> None:
     assert catalog.schema_for("alpha") is first
 
 
-def test_the_schema_directory_defaults_to_one_beside_the_catalog(tmp_path: Path) -> None:
-    catalog = catalog_of(tmp_path)
+def test_the_schema_directory_is_the_one_it_was_handed(tmp_path: Path) -> None:
+    """There is no second default here: ``TOURGANIZE_SCHEMA_DIR`` is resolved in Settings."""
+    elsewhere = tmp_path / "elsewhere"
 
-    assert catalog.schema_dir == catalog.path.parent / "schemas"
+    catalog = YamlComponentCatalog(write_catalog(tmp_path / "config"), elsewhere)
+
+    assert catalog.schema_dir == elsewhere
 
 
 def test_a_disabled_kind_has_no_reachable_schema(tmp_path: Path) -> None:
@@ -96,7 +150,9 @@ def test_a_disabled_kind_has_no_reachable_schema(tmp_path: Path) -> None:
 
 
 def test_a_missing_schema_file_names_the_path_it_looked_for(tmp_path: Path) -> None:
-    catalog = YamlComponentCatalog(write_catalog(tmp_path / "config"))
+    catalog = YamlComponentCatalog(
+        write_catalog(tmp_path / "config"), schemas_dir(tmp_path / "config")
+    )
 
     with pytest.raises(SchemaError) as raised:
         catalog.schema_for("alpha")
@@ -107,7 +163,9 @@ def test_a_missing_schema_file_names_the_path_it_looked_for(tmp_path: Path) -> N
 
 def test_a_schema_error_is_a_catalog_error_so_the_cli_exits_3(tmp_path: Path) -> None:
     """A kind whose schema resolves to nothing is as broken as a dangling dependency."""
-    catalog = YamlComponentCatalog(write_catalog(tmp_path / "config"))
+    catalog = YamlComponentCatalog(
+        write_catalog(tmp_path / "config"), schemas_dir(tmp_path / "config")
+    )
 
     with pytest.raises(CatalogError):
         catalog.schema_for("alpha")
@@ -122,7 +180,9 @@ def test_a_schema_whose_component_kind_disagrees_with_the_catalog_is_refused(
     write_schema(
         tmp_path, "schema_key: alpha.v1\ncomponent_kind: elsewhere\nfields:\n" + VALID_FIELD
     )
-    catalog = YamlComponentCatalog(write_catalog(tmp_path / "config"))
+    catalog = YamlComponentCatalog(
+        write_catalog(tmp_path / "config"), schemas_dir(tmp_path / "config")
+    )
 
     with pytest.raises(SchemaError) as raised:
         catalog.schema_for("alpha")
@@ -346,7 +406,7 @@ def test_adding_an_optional_field_to_a_shipped_schema_needs_no_python_change(
     head, _, rules = existing.partition("blocking_rules:")
     write_schema(tmp_path, f"{head}{extra}blocking_rules:{rules}")
 
-    schema = YamlComponentCatalog(catalog.path).schema_for("alpha")
+    schema = YamlComponentCatalog(catalog.path, catalog.schema_dir).schema_for("alpha")
 
     assert "breakfast" in schema.field_names
     assert [spec.name for spec in schema.optional_fields()][-1] == "breakfast"

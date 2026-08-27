@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from tourganize.adapters.catalog.yaml.yaml_catalog import (
     CATALOG_VERSION,
-    SCHEMAS_DIRECTORY_NAME,
     YamlComponentCatalog,
 )
 from tourganize.adapters.catalog.yaml.yaml_schemas import (
@@ -15,7 +14,6 @@ from tourganize.adapters.catalog.yaml.yaml_schemas import (
 
 __all__ = [
     "CATALOG_VERSION",
-    "SCHEMAS_DIRECTORY_NAME",
     "SCHEMA_FILE_SUFFIX",
     "YamlComponentCatalog",
     "load_schema",

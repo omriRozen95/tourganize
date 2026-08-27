@@ -20,6 +20,8 @@ from tourganize.domain.requirements import (
     RequirementSource,
     RequirementUpdate,
     RequirementValue,
+    SupersededValue,
+    Supersession,
 )
 
 SCHEMA = RequirementSchema(
@@ -143,8 +145,9 @@ def test_a_user_value_overwrites_an_inferred_one_and_the_inferred_one_is_kept() 
     )
 
     assert merged.value_of("place") == "Lisbon"
-    assert [held.value for held in merged.superseded] == ["Paris"]
-    assert merged.superseded[0].source is RequirementSource.INFERRED
+    assert [entry.held.value for entry in merged.superseded] == ["Paris"]
+    assert merged.superseded[0].held.source is RequirementSource.INFERRED
+    assert merged.superseded[0].outcome is Supersession.REPLACED
 
 
 def test_an_inferred_value_does_not_overwrite_a_user_one_and_is_still_recorded() -> None:
@@ -158,9 +161,63 @@ def test_an_inferred_value_does_not_overwrite_a_user_one_and_is_still_recorded()
     )
 
     assert merged.value_of("place") == "Paris"
-    assert [held.value for held in merged.superseded] == ["Lisbon"]
-    assert merged.superseded_for("place")[0].source is RequirementSource.INFERRED
+    assert [entry.held.value for entry in merged.superseded] == ["Lisbon"]
+    assert merged.superseded_for("place")[0].held.source is RequirementSource.INFERRED
+    assert merged.superseded_for("place")[0].outcome is Supersession.OVERRULED
     assert merged.superseded_for("date_range") == ()
+
+
+def test_a_replaced_value_and_an_overruled_one_are_told_apart() -> None:
+    """F05 explains a refinement from this: a value never held is not a value once held."""
+    stated = EMPTY.with_updates(
+        [update("place", "Paris", RequirementSource.USER, 0)], schema=SCHEMA
+    )
+
+    merged = stated.with_updates(
+        [
+            update("place", "Lisbon", RequirementSource.INFERRED, 1),
+            update("place", "Rome", RequirementSource.USER, 2),
+        ],
+        schema=SCHEMA,
+    )
+
+    assert merged.value_of("place") == "Rome"
+    assert [(entry.held.value, entry.outcome) for entry in merged.superseded] == [
+        ("Lisbon", Supersession.OVERRULED),
+        ("Paris", Supersession.REPLACED),
+    ]
+    replaced = [
+        entry.held.value for entry in merged.superseded if entry.outcome is Supersession.REPLACED
+    ]
+    assert replaced == ["Paris"]
+
+
+def test_a_superseded_entry_is_filed_under_the_field_its_value_names() -> None:
+    entry = SupersededValue(
+        RequirementValue("place", "Paris", RequirementSource.USER, 0), Supersession.REPLACED
+    )
+
+    assert entry.field_name == "place"
+
+
+@pytest.mark.parametrize(
+    ("held", "outcome", "reason"),
+    [
+        ("Paris", Supersession.REPLACED, "must be a RequirementValue"),
+        (
+            RequirementValue("place", "Paris", RequirementSource.USER, 0),
+            "replaced",
+            "must be a Supersession",
+        ),
+    ],
+)
+def test_a_malformed_superseded_entry_is_refused(
+    held: object, outcome: object, reason: str
+) -> None:
+    with pytest.raises(InvariantViolationError) as raised:
+        SupersededValue(held, outcome)  # type: ignore[arg-type]
+
+    assert reason in str(raised.value)
 
 
 def test_a_later_turn_of_the_same_source_wins() -> None:
@@ -171,6 +228,16 @@ def test_a_later_turn_of_the_same_source_wins() -> None:
 
     assert later.value_of("place") == "Lisbon"
     assert earlier.value_of("place") == "Paris"
+
+
+def test_within_one_turn_the_last_update_wins() -> None:
+    """A correction in mid-sentence — "Paris, no, Lisbon" — is one turn, and the last one meant."""
+    first = EMPTY.with_updates([update("place", "Paris", turn_index=2)], schema=SCHEMA)
+
+    same_turn = first.with_updates([update("place", "Lisbon", turn_index=2)], schema=SCHEMA)
+
+    assert same_turn.value_of("place") == "Lisbon"
+    assert same_turn.superseded[0].outcome is Supersession.REPLACED
 
 
 def test_the_precedence_table_is_the_whole_rule() -> None:
@@ -293,6 +360,29 @@ def test_the_digest_renders_every_normalised_value_type() -> None:
     assert held.digest() == held.digest()
 
 
+def test_the_digest_does_not_collide_when_a_value_contains_a_separator() -> None:
+    """`{"a": "b\\nc=d"}` and `{"a": "b", "c": "d"}` once hashed the same. F06 seeds a search
+    with this, so two different requirements sharing a digest would answer the second with the
+    first one's slate."""
+    schema = RequirementSchema(
+        "alpha.v1",
+        "alpha",
+        (
+            FieldSpec("a", FieldKind.TEXT, Obligation.BLOCKING, "ask.alpha.a"),
+            FieldSpec("c", FieldKind.TEXT, Obligation.OPTIONAL, "ask.alpha.c"),
+        ),
+        (BlockingRule("both", (("a",),)),),
+    )
+    empty = RequirementSet.empty("alpha")
+
+    one = empty.with_updates([RequirementUpdate("a", "b\nc=d")], schema=schema)
+    other = empty.with_updates(
+        [RequirementUpdate("a", "b"), RequirementUpdate("c", "d")], schema=schema
+    )
+
+    assert one.digest() != other.digest()
+
+
 def test_the_digest_distinguishes_component_kinds() -> None:
     beta_schema = RequirementSchema("beta.v1", "beta", SCHEMA.fields, SCHEMA.blocking_rules)
     alpha = EMPTY.with_updates([update("place", "Paris")], schema=SCHEMA)
@@ -338,6 +428,11 @@ def test_a_malformed_requirement_value_is_refused(keyword: dict[str, object], re
             "names field 'place'",
         ),
         ({}, ["not a tuple"], "superseded must be a tuple"),
+        (
+            {},
+            (RequirementValue("place", "Paris", RequirementSource.USER, 0),),
+            "must hold SupersededValue entries",
+        ),
     ],
 )
 def test_a_malformed_requirement_set_is_refused(

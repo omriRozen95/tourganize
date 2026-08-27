@@ -10,7 +10,7 @@ import pytest
 
 from tourganize.adapters.clock.fake import DEFAULT_MOMENT, FrozenClock
 from tourganize.domain.options import Money, PlanOption, Provenance
-from tourganize.platform.settings import Settings
+from tourganize.platform.settings import Settings, default_schema_dir
 
 SettingsFactory = Callable[..., Settings]
 OptionFactory = Callable[..., PlanOption]
@@ -113,9 +113,19 @@ def write_catalog(config_dir: Path, text: str = SAMPLE_CATALOG) -> Path:
     return path
 
 
+def schemas_dir(config_dir: Path) -> Path:
+    """Where ``Settings`` resolves ``TOURGANIZE_SCHEMA_DIR`` to inside ``config_dir``.
+
+    The documented default, asked for rather than spelled out: an adapter is handed this
+    directory explicitly — it has no default of its own to fall back to — so every test that
+    builds one by hand has to say where the schemas are, and should say it the same way.
+    """
+    return default_schema_dir(config_dir)
+
+
 def write_schemas(config_dir: Path, schemas: Mapping[str, str] = SAMPLE_SCHEMAS) -> Path:
     """Write Requirement Schemas where ``Settings`` expects them, and return the directory."""
-    directory = config_dir / "catalog" / "schemas"
+    directory = schemas_dir(config_dir)
     directory.mkdir(parents=True, exist_ok=True)
     for schema_key, text in schemas.items():
         (directory / f"{schema_key}.yaml").write_text(text, encoding="utf-8")

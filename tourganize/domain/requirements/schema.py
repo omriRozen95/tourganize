@@ -13,10 +13,10 @@ Two shapes carry the obligation, and it is worth being clear about why there are
 * :class:`BlockingRule` is how a blocking obligation is actually *satisfied*, and it is a set
   of alternatives rather than a flag. The client's own example is the reason: "there should be
   some time range, if not a specific start and end date". One rule named ``when``, satisfied by
-  ``date_range`` **or** by ``check_in`` **and** ``check_out``. A per-field boolean cannot say
-  that; ``any_of: (("date_range",), ("check_in", "check_out"))`` says exactly that.
+  ``date_range`` **or** by ``starts_on`` **and** ``ends_on``. A per-field boolean cannot say
+  that; ``any_of: (("date_range",), ("starts_on", "ends_on"))`` says exactly that.
 
-A group in ``any_of`` may name a field whose own Obligation is ``OPTIONAL`` — ``check_in`` is
+A group in ``any_of`` may name a field whose own Obligation is ``OPTIONAL`` — ``starts_on`` is
 one — because the field is not required *by itself*; it is one of the ways a rule can be met.
 The reverse does not hold: a field declared ``BLOCKING`` that no rule references would be an
 obligation nothing enforces, so :func:`schema_problems` reports it.
@@ -37,10 +37,9 @@ from types import MappingProxyType
 from typing import Final
 
 from tourganize.domain.errors import InvariantViolationError
-from tourganize.domain.invariants import require_text
+from tourganize.domain.invariants import MESSAGE_KEY_PATTERN, require_key, require_text
 
 __all__ = [
-    "BOUNDED_FIELD_KINDS",
     "CONSTRAINT_KEYS",
     "FIELD_NAME_PATTERN",
     "BlockingRule",
@@ -55,12 +54,13 @@ __all__ = [
 #: message keys, telemetry fields, extraction schemas (F08) and JSON on the command line.
 FIELD_NAME_PATTERN: Final = re.compile(r"[a-z][a-z0-9_]*")
 
-_MESSAGE_KEY_PATTERN: Final = re.compile(r"[a-z][a-z0-9_.]*")
 _SCHEMA_KEY_PATTERN: Final = re.compile(r"[a-z][a-z0-9_]*\.v[0-9]+")
 _RULE_NAME_PATTERN: Final = re.compile(r"[a-z][a-z0-9_]*")
 
-#: The constraint keys a Field Spec may declare. Bounds only: anything richer is a validator,
-#: and a validator is Python, which is the thing a schema is not allowed to be.
+#: The constraint keys this release *understands*. ``constraints`` is an open bag —
+#: ``Mapping[str, object]`` — so that a new Field Kind can read a bound nobody has invented
+#: yet without every older schema having to be re-validated; these two are simply the ones
+#: whose values are checked here, because they are the ones a validator acts on.
 CONSTRAINT_KEYS: Final = frozenset({"min", "max"})
 
 
@@ -89,11 +89,6 @@ class Obligation(Enum):
     OPTIONAL = "optional"
 
 
-#: The Field Kinds ``min``/``max`` mean anything for. Bounds on a place or a date range would
-#: be read by nothing, and a constraint nobody reads is worse than one that is refused.
-BOUNDED_FIELD_KINDS: Final = frozenset({FieldKind.INTEGER, FieldKind.SCORE, FieldKind.DURATION})
-
-
 @dataclass(frozen=True, slots=True)
 class FieldSpec:
     """One declared field of a Requirement Schema. Data, validated at construction."""
@@ -107,7 +102,7 @@ class FieldSpec:
     constraints: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        _require_key(self.name, "FieldSpec.name", FIELD_NAME_PATTERN)
+        require_key(self.name, "FieldSpec.name", FIELD_NAME_PATTERN)
         if not isinstance(self.field_kind, FieldKind):
             raise InvariantViolationError(
                 f"{self.name}: field_kind must be a FieldKind, got {self.field_kind!r}"
@@ -118,12 +113,10 @@ class FieldSpec:
             )
         # Every field carries the message key of the question that asks for it, because a gap
         # the dialogue cannot phrase a question for is a gap that can never be closed.
-        _require_key(
-            self.prompt_message_key, f"{self.name}.prompt_message_key", _MESSAGE_KEY_PATTERN
-        )
+        require_key(self.prompt_message_key, f"{self.name}.prompt_message_key", MESSAGE_KEY_PATTERN)
         if self.example_message_key is not None:
-            _require_key(
-                self.example_message_key, f"{self.name}.example_message_key", _MESSAGE_KEY_PATTERN
+            require_key(
+                self.example_message_key, f"{self.name}.example_message_key", MESSAGE_KEY_PATTERN
             )
         _require_enum_values(self)
         object.__setattr__(self, "constraints", _checked_constraints(self))
@@ -150,7 +143,7 @@ class BlockingRule:
     any_of: tuple[tuple[str, ...], ...]
 
     def __post_init__(self) -> None:
-        _require_key(self.name, "BlockingRule.name", _RULE_NAME_PATTERN)
+        require_key(self.name, "BlockingRule.name", _RULE_NAME_PATTERN)
         if type(self.any_of) is not tuple or not self.any_of:
             raise InvariantViolationError(
                 f"blocking rule {self.name!r}: any_of must be a non-empty tuple of field "
@@ -163,7 +156,7 @@ class BlockingRule:
                     f"tuple of field names, got {group!r}"
                 )
             for name in group:
-                _require_key(name, f"blocking rule {self.name!r}", FIELD_NAME_PATTERN)
+                require_key(name, f"blocking rule {self.name!r}", FIELD_NAME_PATTERN)
             if len(set(group)) != len(group):
                 raise InvariantViolationError(
                     f"blocking rule {self.name!r}: group {group!r} repeats a field name"
@@ -185,8 +178,8 @@ class RequirementSchema:
     blocking_rules: tuple[BlockingRule, ...] = ()
 
     def __post_init__(self) -> None:
-        _require_key(self.schema_key, "RequirementSchema.schema_key", _SCHEMA_KEY_PATTERN)
-        _require_key(self.component_kind, "RequirementSchema.component_kind", FIELD_NAME_PATTERN)
+        require_key(self.schema_key, "RequirementSchema.schema_key", _SCHEMA_KEY_PATTERN)
+        require_key(self.component_kind, "RequirementSchema.component_kind", FIELD_NAME_PATTERN)
         if type(self.fields) is not tuple:
             raise InvariantViolationError(
                 f"{self.schema_key}: fields must be a tuple of FieldSpec, got {self.fields!r}"
@@ -239,7 +232,10 @@ def schema_problems(schema: RequirementSchema) -> tuple[str, ...]:
     * a Blocking Rule group naming a field nobody declares — the rule could then never be
       satisfied, and the traveller would be asked for something the schema cannot describe;
     * a field declared ``blocking`` that no rule references — an obligation nothing enforces;
-    * a schema with fields but no way to be planned at all.
+    * a schema that declares fields but no Blocking Rule at all. Nothing gates planning, so
+      the component is Plannable from the first turn and would be sourced against an empty
+      Requirement Set — options for a wish nobody has stated yet. A schema that genuinely
+      needs nothing known declares no fields either, and is left alone.
 
     "Every field has a ``prompt_message_key``" and "an enum field declares values" are
     enforced by :class:`FieldSpec` itself, at construction, because a Field Spec without them
@@ -258,6 +254,11 @@ def schema_problems(schema: RequirementSchema) -> tuple[str, ...]:
         for spec in schema.blocking_fields()
         if spec.name not in referenced
     ]
+    if schema.fields and not schema.blocking_rules:
+        problems.append(
+            "the schema declares fields but no blocking rule, so nothing has to be known "
+            "before planning starts"
+        )
     return tuple(problems)
 
 
@@ -316,38 +317,30 @@ def _require_enum_values(spec: FieldSpec) -> None:
 
 
 def _checked_constraints(spec: FieldSpec) -> Mapping[str, object]:
-    """Return the declared bounds as a read-only mapping, or raise."""
+    """Return the declared constraints as a read-only mapping, or raise.
+
+    The constraints this release understands — :data:`CONSTRAINT_KEYS` — are checked; anything
+    else is carried through untouched. That asymmetry is deliberate. ``min: "one"`` is a
+    mistake nobody meant, and refusing it costs a round trip; a key this release has never
+    heard of is what a *newer* Field Kind looks like from here, and refusing that would make
+    "adding a Field Kind is additive" untrue for every schema file already written. A
+    constraint on a kind that does not read it is inert, not wrong, for the same reason.
+    """
     if not isinstance(spec.constraints, Mapping):
         raise InvariantViolationError(
             f"{spec.name}: constraints must be a mapping, got {spec.constraints!r}"
         )
-    unknown = sorted(str(key) for key in spec.constraints if key not in CONSTRAINT_KEYS)
-    if unknown:
-        raise InvariantViolationError(
-            f"{spec.name}: unknown constraint(s) {', '.join(unknown)}; a field declares "
-            f"{', '.join(sorted(CONSTRAINT_KEYS))}"
-        )
-    if spec.constraints and spec.field_kind not in BOUNDED_FIELD_KINDS:
-        bounded = ", ".join(sorted(kind.value for kind in BOUNDED_FIELD_KINDS))
-        raise InvariantViolationError(
-            f"{spec.name}: constraints are only read on {bounded} fields, "
-            f"not on {spec.field_kind.value}"
-        )
-    bounds: dict[str, object] = {}
-    for key in sorted(spec.constraints):
+    declared: dict[str, object] = {}
+    for key in sorted(spec.constraints, key=str):
         value = spec.constraints[key]
-        if isinstance(value, bool) or not isinstance(value, int | float):
+        if key in CONSTRAINT_KEYS and (
+            isinstance(value, bool) or not isinstance(value, int | float)
+        ):
             raise InvariantViolationError(
                 f"{spec.name}: constraint {key} must be a number, got {value!r}"
             )
-        bounds[key] = value
-    low, high = bounds.get("min"), bounds.get("max")
+        declared[str(key)] = value
+    low, high = declared.get("min"), declared.get("max")
     if isinstance(low, int | float) and isinstance(high, int | float) and low > high:
         raise InvariantViolationError(f"{spec.name}: constraint min {low} is above max {high}")
-    return MappingProxyType(bounds)
-
-
-def _require_key(value: str, field_name: str, pattern: re.Pattern[str]) -> None:
-    require_text(value, field_name)
-    if not pattern.fullmatch(value):
-        raise InvariantViolationError(f"{field_name} must match {pattern.pattern!r}, got {value!r}")
+    return MappingProxyType(declared)

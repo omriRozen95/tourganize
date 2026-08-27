@@ -8,8 +8,14 @@ locale-neutral reason key. Normalising here is what makes everything downstream 
 always a :class:`~tourganize.domain.options.money.Money`, and a ``place`` is always a trimmed
 string — so ``digest()`` is stable and F06's matching has one shape to match on.
 
-Three boundaries this module deliberately does not cross:
+Four boundaries this module deliberately does not cross:
 
+* **Free text is not parsed here.** Each Field Kind accepts one canonical spelling — and the
+  already-parsed Python type where there is one, because a ``date`` that arrived as a
+  :class:`datetime.date` needs no spelling at all. ``"2h"`` for a duration, ``"yes"`` for a
+  boolean and ``"EUR 74000"`` for an amount are all *extraction*, which is F08's job against a
+  prompt and a model; accepting them here would put a second, weaker parser in the domain and
+  make the two disagree about what a traveller meant.
 * **Relative expressions are not interpreted here.** "this year", "next month" and "next
   Tuesday" are resolved against the ``Clock`` in the interpretation layer (F05/F08) *before*
   a value reaches a Requirement Set. Reading them here would pull a clock, and then a locale
@@ -21,6 +27,12 @@ Three boundaries this module deliberately does not cross:
 
 Every reason key this module can produce is listed in :data:`REASON_MESSAGE_KEYS`, so F10's
 Message Catalogue can be checked against it instead of against a grep.
+
+Gap analysis needs the *finding* rather than the exception — a present-but-invalid value has
+to be reported so the dialogue can re-ask for it, and an exception would abandon the whole
+report over one field — so :mod:`~tourganize.domain.requirements.gaps` catches
+:class:`~tourganize.domain.errors.RequirementValueError`, which already names the field, the
+reason key and the detail.
 """
 
 from __future__ import annotations
@@ -54,7 +66,6 @@ __all__ = [
     "REASON_NOT_TEXT",
     "VALIDATORS",
     "DateRange",
-    "invalid_reason",
     "normalise",
 ]
 
@@ -95,11 +106,7 @@ REASON_MESSAGE_KEYS: Final = (
     REASON_ABOVE_MAXIMUM,
 )
 
-_TRUES: Final = frozenset({"true", "yes", "1"})
-_FALSES: Final = frozenset({"false", "no", "0"})
 _CURRENCY_CODE: Final = re.compile(r"[A-Za-z]{3}")
-_DURATION: Final = re.compile(r"(?P<amount>[0-9]+(\.[0-9]+)?)\s*(?P<unit>[mhd])")
-_MINUTES_PER: Final[Mapping[str, int]] = MappingProxyType({"m": 1, "h": 60, "d": 60 * 24})
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,31 +156,8 @@ def normalise(spec: FieldSpec, value: object) -> object:
     return validator(spec, value)
 
 
-def invalid_reason(spec: FieldSpec, value: object) -> tuple[str, str] | None:
-    """Return ``(reason_message_key, detail)`` when ``value`` is invalid, else ``None``.
-
-    The non-raising half of the same question :func:`normalise` answers. Gap analysis needs
-    the finding rather than the exception: a present-but-invalid value has to be *reported*
-    so the dialogue can re-ask for it, and an exception at that point would abandon the whole
-    report over one field.
-    """
-    try:
-        normalise(spec, value)
-    except RequirementValueError as exc:
-        return exc.reason_message_key, exc.detail
-    return None
-
-
-def _place(spec: FieldSpec, value: object) -> object:
-    """A trimmed, case-preserved string. Resolution to codes or coordinates is F16/F17."""
-    return _text_value(spec, value)
-
-
-def _text(spec: FieldSpec, value: object) -> object:
-    return _text_value(spec, value)
-
-
 def _text_value(spec: FieldSpec, value: object) -> str:
+    """Trimmed, case-preserved text — a ``text`` value, and a ``place`` before F16/F17."""
     if not isinstance(value, str):
         _refuse(spec, REASON_NOT_TEXT, f"expected text, got {_shown(value)}")
     trimmed = value.strip()
@@ -182,11 +166,8 @@ def _text_value(spec: FieldSpec, value: object) -> str:
     return trimmed
 
 
-def _date(spec: FieldSpec, value: object) -> object:
-    return _date_value(spec, value)
-
-
 def _date_value(spec: FieldSpec, value: object) -> date:
+    """One resolved calendar date: a ``date``, a ``datetime``, or an ISO-8601 spelling."""
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
@@ -289,13 +270,17 @@ def _number(spec: FieldSpec, value: object) -> float:
 
 
 def _money(spec: FieldSpec, value: object) -> object:
-    """An exact amount **and** its currency. There is no default currency anywhere."""
+    """An exact amount **and** its currency, spelled ``<minor units> <ISO 4217 code>``.
+
+    There is no default currency anywhere, and no second spelling: ``EUR 74000`` is refused
+    for naming no amount where an amount belongs, not silently read backwards.
+    """
     if isinstance(value, Money):
         return value
     if isinstance(value, Mapping):
         return _money_of(spec, value.get("amount_minor"), value.get("currency"))
     if isinstance(value, str):
-        parts = value.replace(",", " ").split()
+        parts = value.split()
         if len(parts) == 1:
             _refuse(
                 spec,
@@ -308,8 +293,7 @@ def _money(spec: FieldSpec, value: object) -> object:
                 REASON_NOT_MONEY,
                 f"expected `<minor units> <ISO code>`, got {_shown(value)}",
             )
-        code, amount = _split_amount_and_code(parts)
-        return _money_of(spec, amount, code)
+        return _money_of(spec, parts[0], parts[1])
     if isinstance(value, int | float):
         _refuse(
             spec,
@@ -317,14 +301,6 @@ def _money(spec: FieldSpec, value: object) -> object:
             f"an amount must name its currency, got {_shown(value)}",
         )
     _refuse(spec, REASON_NOT_MONEY, f"expected an amount and a currency, got {_shown(value)}")
-
-
-def _split_amount_and_code(parts: Sequence[str]) -> tuple[str, object]:
-    """Return ``(currency code, amount)`` from ``74000 EUR`` or ``EUR 74000``, in either order."""
-    first, second = parts[0], parts[1]
-    if _CURRENCY_CODE.fullmatch(first):
-        return first, second
-    return second, first
 
 
 def _money_of(spec: FieldSpec, amount: object, code: object) -> Money:
@@ -346,13 +322,14 @@ def _money_of(spec: FieldSpec, amount: object, code: object) -> Money:
 
 
 def _boolean(spec: FieldSpec, value: object) -> object:
+    """A real ``bool``, or the words ``true``/``false``. ``yes``, ``1`` and ``on`` are prose."""
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
         spelled = value.strip().lower()
-        if spelled in _TRUES:
+        if spelled == "true":
             return True
-        if spelled in _FALSES:
+        if spelled == "false":
             return False
     _refuse(spec, REASON_NOT_A_BOOLEAN, f"expected true or false, got {_shown(value)}")
 
@@ -369,7 +346,11 @@ def _enum(spec: FieldSpec, value: object) -> object:
 
 
 def _duration(spec: FieldSpec, value: object) -> object:
-    """A length of time. Bare numbers and the declared bounds are both read as minutes."""
+    """A length of time in **minutes**, or a :class:`datetime.timedelta`.
+
+    Minutes are the unit the declared bounds are read in too, so one number means one thing
+    everywhere. ``2h`` is a spelling, and spellings are F08's to resolve.
+    """
     minutes = _duration_minutes(spec, value)
     _within_bounds(spec, minutes)
     return timedelta(minutes=minutes)
@@ -383,17 +364,13 @@ def _duration_minutes(spec: FieldSpec, value: object) -> float:
     if isinstance(value, int | float):
         return float(value)
     if isinstance(value, str):
-        spelled = value.strip().lower()
-        matched = _DURATION.fullmatch(spelled)
-        if matched is not None:
-            return float(matched["amount"]) * _MINUTES_PER[matched["unit"]]
         try:
-            return float(spelled)
+            return float(value.strip())
         except ValueError:
             _refuse(
                 spec,
                 REASON_NOT_A_DURATION,
-                f"expected minutes, or a number followed by m, h or d, got {_shown(value)}",
+                f"expected a number of minutes, got {_shown(value)}",
             )
     _refuse(spec, REASON_NOT_A_DURATION, f"expected a duration, got {_shown(value)}")
 
@@ -428,12 +405,12 @@ def _refuse(spec: FieldSpec, reason_message_key: str, detail: str) -> NoReturn:
 VALIDATORS: Final[Mapping[FieldKind, Callable[[FieldSpec, object], object]]] = MappingProxyType(
     {
         FieldKind.DATE_RANGE: _date_range,
-        FieldKind.DATE: _date,
-        FieldKind.PLACE: _place,
+        FieldKind.DATE: _date_value,
+        FieldKind.PLACE: _text_value,
         FieldKind.INTEGER: _integer,
         FieldKind.MONEY: _money,
         FieldKind.SCORE: _score,
-        FieldKind.TEXT: _text,
+        FieldKind.TEXT: _text_value,
         FieldKind.ENUM: _enum,
         FieldKind.BOOLEAN: _boolean,
         FieldKind.DURATION: _duration,

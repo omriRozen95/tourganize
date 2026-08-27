@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
-from conftest import SAMPLE_CATALOG, write_catalog, write_schemas
+from conftest import SAMPLE_CATALOG, schemas_dir, write_catalog, write_schemas
 
 from tourganize.adapters.catalog.memory import InMemoryComponentCatalog
 from tourganize.adapters.catalog.yaml import YamlComponentCatalog
@@ -99,8 +99,9 @@ SCHEMAS = (
 
 
 def _yaml_catalog(tmp_path: Path) -> ComponentCatalog:
-    write_schemas(tmp_path / "config")
-    return YamlComponentCatalog(write_catalog(tmp_path / "config", SAMPLE_CATALOG))
+    config = tmp_path / "config"
+    write_schemas(config)
+    return YamlComponentCatalog(write_catalog(config, SAMPLE_CATALOG), schemas_dir(config))
 
 
 def _memory_catalog(_tmp_path: Path) -> ComponentCatalog:
@@ -207,7 +208,9 @@ def test_an_invalid_catalog_is_refused_by_every_adapter(
     with pytest.raises(CatalogError) as from_memory:
         InMemoryComponentCatalog(cyclic)
     with pytest.raises(CatalogError) as from_file:
-        YamlComponentCatalog(write_catalog(tmp_path / "config", body)).kinds()
+        YamlComponentCatalog(
+            write_catalog(tmp_path / "config", body), schemas_dir(tmp_path / "config")
+        ).kinds()
 
     assert "dependency cycle" in str(from_memory.value)
     assert "dependency cycle" in str(from_file.value)
@@ -271,7 +274,9 @@ def test_a_schema_that_contradicts_its_kind_is_refused_by_every_adapter(
     with pytest.raises(SchemaError) as from_memory:
         InMemoryComponentCatalog(DECLARED, (wrong,))
     with pytest.raises(SchemaError) as from_file:
-        YamlComponentCatalog(write_catalog(tmp_path / "config", SAMPLE_CATALOG)).schema_for("alpha")
+        YamlComponentCatalog(
+            write_catalog(tmp_path / "config", SAMPLE_CATALOG), schemas_dir(tmp_path / "config")
+        ).schema_for("alpha")
 
     assert "elsewhere" in str(from_memory.value)
     assert "elsewhere" in str(from_file.value)

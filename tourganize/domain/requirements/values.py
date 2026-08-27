@@ -10,24 +10,34 @@ Two rules do the interesting work.
 **Precedence.** Values arrive from four places and they are not equal. A traveller's own words
 overwrite anything; something the system inferred overwrites only a default or a value carried
 over from an earlier session; a default never overwrites anything that was not also a default.
-Within one rank the later turn wins, which is what makes "actually, make it the 24th" work.
-:data:`PRECEDENCE` is the whole rule, as data.
+Within one rank the later turn wins, which is what makes "actually, make it the 24th" work —
+and on the *same* turn the later update wins too, because two values for one field in one turn
+are a correction in mid-sentence ("Paris — no, Lisbon"), and the last thing said is the thing
+that was meant. :data:`PRECEDENCE` is the whole rule, as data.
 
-**Nothing is dropped.** When two values contradict each other one of them is replaced, and the
-replaced one goes into :attr:`RequirementSet.superseded` — including when the *incoming* value
-is the one that loses, because "we heard you, but your earlier answer stands" is a thing the
-dialogue may need to say. A Requirement Set therefore carries the evidence for explaining any
-refinement, and never quietly forgets a contradiction.
+**Nothing is dropped, and nothing is confused with anything else.** When two values contradict
+each other, the one that stops being in force goes into :attr:`RequirementSet.superseded` as a
+:class:`SupersededValue` that says *how* it lost: ``REPLACED`` for a value that was held and
+was pushed out, ``OVERRULED`` for one that arrived and never took hold because the standing
+value outranked it. Both are kept — "we heard you, but your earlier answer stands" is a thing
+the dialogue may need to say — and they are kept apart, because a refinement explained from
+values the traveller never actually held would be a lie. One history, in the order the
+contradictions happened.
 
 The schema is a parameter of :meth:`~RequirementSet.with_updates` rather than a field of the
 set. A set is small, copied on every turn and persisted by F12; the schema is shared, loaded
-from a file and versioned. Passing it in is also what lets the merge refuse an undeclared
-field, which is the behaviour the Replaceability notes require be preserved.
+from a file and versioned. The merge needs it because it **normalises** — what a value's
+normalised form is, is a fact about its Field Spec and about nothing else — and, being there,
+it also refuses a field the schema does not declare. Neither of those requires *this*
+signature: a module-level ``merge(schema, set, updates)`` would do both. What this signature
+buys is that a Requirement Set never holds a schema it would then have to be persisted with
+— D14 in the decision log.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -51,6 +61,8 @@ __all__ = [
     "RequirementSource",
     "RequirementUpdate",
     "RequirementValue",
+    "SupersededValue",
+    "Supersession",
 ]
 
 #: How many hex characters :meth:`RequirementSet.digest` returns. Sixteen is a collision
@@ -120,6 +132,44 @@ class RequirementValue:
         return PRECEDENCE[self.source]
 
 
+class Supersession(Enum):
+    """How a Requirement Value stopped being the one in force."""
+
+    #: It was held for its field, and a value that outranked it took its place.
+    REPLACED = "replaced"
+    #: It arrived for a field that already held a value which outranked it, so it never took
+    #: hold. Kept anyway: the traveller said it, and may need to be told why it did not win.
+    OVERRULED = "overruled"
+
+
+@dataclass(frozen=True, slots=True)
+class SupersededValue:
+    """One Requirement Value that is not in force, and why it is not.
+
+    F05 explains a refinement from this history and F12 persists it, so the distinction is
+    load-bearing rather than diagnostic: ``REPLACED`` is something the traveller once had,
+    ``OVERRULED`` is something they asked for and did not get.
+    """
+
+    held: RequirementValue
+    outcome: Supersession
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.held, RequirementValue):
+            raise InvariantViolationError(
+                f"SupersededValue.held must be a RequirementValue, got {self.held!r}"
+            )
+        if not isinstance(self.outcome, Supersession):
+            raise InvariantViolationError(
+                f"{self.held.field_name}: outcome must be a Supersession, got {self.outcome!r}"
+            )
+
+    @property
+    def field_name(self) -> str:
+        """The field this value was offered for — what the history is filed by."""
+        return self.held.field_name
+
+
 @dataclass(frozen=True, slots=True)
 class RequirementUpdate:
     """One value offered for one field, as a turn produces it.
@@ -146,7 +196,7 @@ class RequirementSet:
 
     component_kind: str
     values: Mapping[str, RequirementValue] = field(default_factory=dict)
-    superseded: tuple[RequirementValue, ...] = ()
+    superseded: tuple[SupersededValue, ...] = ()
 
     def __post_init__(self) -> None:
         require_text(self.component_kind, "RequirementSet.component_kind")
@@ -169,6 +219,12 @@ class RequirementSet:
             raise InvariantViolationError(
                 f"{self.component_kind}: superseded must be a tuple, got {self.superseded!r}"
             )
+        for entry in self.superseded:
+            if not isinstance(entry, SupersededValue):
+                raise InvariantViolationError(
+                    f"{self.component_kind}: superseded must hold SupersededValue entries, "
+                    f"got {entry!r}"
+                )
         # A read-only view, so a set handed to an Option Source cannot be edited underneath it.
         object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
 
@@ -192,9 +248,9 @@ class RequirementSet:
         """The whole Requirement Value — value, source, turn, confidence — or ``None``."""
         return self.values.get(field_name)
 
-    def superseded_for(self, field_name: str) -> tuple[RequirementValue, ...]:
-        """Every value this field has held and lost, oldest first."""
-        return tuple(held for held in self.superseded if held.field_name == field_name)
+    def superseded_for(self, field_name: str) -> tuple[SupersededValue, ...]:
+        """Every value this field has lost, oldest first, each saying how it lost."""
+        return tuple(entry for entry in self.superseded if entry.field_name == field_name)
 
     def with_updates(
         self, updates: Sequence[RequirementUpdate], *, schema: RequirementSchema
@@ -227,11 +283,12 @@ class RequirementSet:
                 merged[spec.name] = candidate
             elif _outranks(candidate, standing):
                 merged[spec.name] = candidate
-                superseded.append(standing)
+                superseded.append(SupersededValue(standing, Supersession.REPLACED))
             else:
-                # The incoming value lost. It is still recorded: a contradiction the traveller
-                # will hear about again is better than one that silently disappeared.
-                superseded.append(candidate)
+                # The incoming value lost. It is still recorded — a contradiction the traveller
+                # will hear about again is better than one that silently disappeared — but as
+                # OVERRULED, because it was never in force and must not read as a refinement.
+                superseded.append(SupersededValue(candidate, Supersession.OVERRULED))
         return RequirementSet(self.component_kind, merged, tuple(superseded))
 
     def digest(self) -> str:
@@ -241,11 +298,24 @@ class RequirementSet:
         the confidence. Two sets that ask for the same thing must digest the same, whichever
         route the values took, because F06 seeds a deterministic search with this — and a
         refinement that changes nothing should not change the slate.
+
+        The material is JSON with sorted keys rather than ``name=value`` lines: a value may
+        contain a newline or an ``=``, and with a separator that can appear inside a value,
+        ``{"a": "b\\nc=d"}`` and ``{"a": "b", "c": "d"}`` hash to the same thing. Two different
+        requirements sharing one digest would have F06 answer the second with the first one's
+        slate, which is the one failure this fingerprint exists to prevent.
         """
-        canonical = "\n".join(
-            f"{name}={_canonical(self.values[name].value)}" for name in sorted(self.values)
+        material = json.dumps(
+            {
+                "component_kind": self.component_kind,
+                "values": {
+                    name: _canonical(self.values[name].value) for name in sorted(self.values)
+                },
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
         )
-        material = f"{self.component_kind}\n{canonical}"
         return hashlib.sha256(material.encode("utf-8")).hexdigest()[:_DIGEST_LENGTH]
 
 
@@ -268,7 +338,12 @@ def _normalised_or_raw(spec: FieldSpec, value: object) -> object:
 
 
 def _outranks(incoming: RequirementValue, standing: RequirementValue) -> bool:
-    """Whether ``incoming`` replaces ``standing``. The whole merge precedence, in three lines."""
+    """Whether ``incoming`` replaces ``standing``. The whole merge precedence, in three lines.
+
+    ``>=`` rather than ``>``: within one rank a later turn wins, and a value arriving on the
+    *same* turn wins too. Two values for one field in one turn are a correction in mid-sentence
+    — "Paris, no, Lisbon" — so the last update of a turn is the one that stands.
+    """
     if incoming.rank != standing.rank:
         return incoming.rank > standing.rank
     return incoming.turn_index >= standing.turn_index
