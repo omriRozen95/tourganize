@@ -157,18 +157,18 @@ tourganize/                 # ✔ F01
     errors.py             # ✔ TourganizeError (the root) and the domain's own errors     (F02)
     trip/                 # ✔ TripPlan, PlanComponent, Selection, PlanCompleteness      (F02)
     requirements/         # ✔ RequirementSchema, FieldSpec, RequirementSet, GapReport   (F03)
-    catalog/              # ✔ ComponentKind, catalog invariants, PriorityPolicy, Agenda (F02/F04)
+    catalog/              # ✔ ComponentKind, invariants, PriorityPolicy, build_agenda (F02/F04)
     options/              # ✔ PlanOption, OptionSlate, OptionQuery, Money, Provenance   (F02/F06)
   dialogue/               # ✔ pure: PlanningSession, DialogueState, DialogueDirector    (F05)
   ports/                  # ✔ abstract protocols only, stdlib-typed
     platform.py           # ✔ Clock, TelemetrySink, TelemetryEvent                      (F01)
-    catalog.py            # ✔ ComponentCatalog, later PriorityPolicy                    (F02/F04)
+    catalog.py            # ✔ ComponentCatalog, PriorityPolicy (re-exported)          (F02/F04)
   application/            # ✔ Composition Root and application services
     composition.py        # ✔ build_container: the only place adapters are constructed  (F01)
     diagnostics.py        # ✔ what `tourganize doctor` reports                          (F01)
   language/               # ✔ PromptLibrary, locale detection, MessageCatalogue, bidi   (F08/F10)
   adapters/
-    catalog/              # ✔ yaml/ (catalog + schemas), memory/                        (F02/F03)
+    catalog/              # ✔ yaml/ (catalog + schemas), memory/, priority/             (F02-F04)
     clock/                # ✔ system/, fake/                                            (F01)
     telemetry/            # ✔ jsonl/, null/                                             (F01)
     options/              # ✔ fixture/, world/, live/                                   (F06, F17, F24)
@@ -179,7 +179,7 @@ tourganize/                 # ✔ F01
     export/               #   text/, typeset/                                           (F13, F14)
     persistence/          #   memory/, sqlite/                                          (F12)
   platform/               # ✔ Settings, secrets, logging setup, errors, config reader
-  cli.py                  # ✔ doctor, catalog show|validate, stubs for the rest
+  cli.py                  # ✔ doctor, catalog show|validate|gaps|agenda, stubs for the rest
 services/
   model_service/          # own container: HTTP façade + Inference Engine (F20)
   mcp_feasibility/        # own container: local FastMCP service (F16)
@@ -266,7 +266,9 @@ class ComponentCatalog(Protocol):
     def get(self, kind_key: str) -> ComponentKind: ...
     def schema_for(self, kind_key: str) -> RequirementSchema: ...        # completed by F03
 
-class PriorityPolicy(Protocol):
+class PriorityPolicy(Protocol):                       # defined in the domain, re-exported here
+    @property
+    def policy_id(self) -> str: ...
     def order(self, candidates: Sequence[ComponentKind], plan: TripPlan) -> Sequence[str]: ...
 
 # tourganize/ports/platform.py                                  introduced by F01
@@ -319,9 +321,10 @@ The Choose-or-Refine Loop is the branch on the *next* turn: intent `choose_optio
 and pops the Agenda; intent `refine` merges new Requirement Values and re-enters sourcing for the
 **same** Plan Component with a new round index. Nothing bounds the number of rounds.
 
-Mentioned-First is enforced in one place: the Agenda is rebuilt every turn as
-`ordered(mentioned & unsettled) + ordered(unmentioned & not declined)`, and the Director only ever
-plans `agenda[0]`. Proactive Offers begin only when the mentioned band is empty.
+Mentioned-First is enforced in one place: the Agenda is rebuilt every turn by `build_agenda` as
+`ordered(mentioned & unsettled) + ordered(unmentioned & not declined)`, where `ordered` is the
+replaceable Priority Policy applied to one band at a time, and the Director only ever plans
+`agenda.next_actionable()`. Proactive Offers begin only when `agenda.is_mentioned_band_empty()`.
 
 ---
 

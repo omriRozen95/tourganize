@@ -4,13 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is right now
 
-**A specification repository with its foundation, its domain core and its requirement model built.**
-F01–F03 have landed: there is an installable `tourganize` package, a test suite, a CPU-only container
-and CI; a Trip Plan made of Plan Components whose *types* are declared as data in
-`config/catalog/components.yaml`; and, per kind, a Requirement Schema in `config/catalog/schemas/`
-saying what has to be known before that component can be planned. Working commands are
-`tourganize --version`, `doctor`, `catalog show`, `catalog validate` and `catalog gaps`. The
-remaining 22 feature specs are still the plan, implemented one at a time, in order.
+**A specification repository with its foundation, its domain core, its requirement model and its
+planning order built.** F01–F04 have landed: there is an installable `tourganize` package, a test
+suite, a CPU-only container and CI; a Trip Plan made of Plan Components whose *types* are declared as
+data in `config/catalog/components.yaml`; per kind, a Requirement Schema in `config/catalog/schemas/`
+saying what has to be known before that component can be planned; and a Planning Agenda that answers
+"what do we plan next" — mentioned Component Kinds first, then the rest, each band ordered by a
+replaceable Priority Policy. Working commands are `tourganize --version`, `doctor`, `catalog show`,
+`catalog validate`, `catalog gaps` and `catalog agenda`. The remaining 21 feature specs are still the
+plan, implemented one at a time, in order.
 
 Four kinds of file, with different rules:
 
@@ -21,7 +23,7 @@ Four kinds of file, with different rules:
 | `docs/**` | The deliverable | Edit freely, but honour the consistency rules below. |
 | `tourganize/**`, `tests/**`, `config/**`, `docker/**` | The implementation | Governed by the feature file it belongs to plus the invariants below. |
 
-The next thing to build is `docs/features/F04-component-prioritization-policy.md`. Read
+The next thing to build is `docs/features/F05-dialogue-director-and-session-lifecycle.md`. Read
 `docs/roadmap.md` before starting any implementation work.
 
 ## Reading order for a new session
@@ -31,7 +33,7 @@ The next thing to build is `docs/features/F04-component-prioritization-policy.md
 2. `docs/architecture/glossary.md` — the ubiquitous language. **Authoritative on naming.**
 3. `docs/architecture/overview.md` — contexts, ports, per-turn data flow, C1–C14 traceability, open
    client questions.
-4. `docs/architecture/decisions.md` — D1–D14, each with cost and reversal path.
+4. `docs/architecture/decisions.md` — D1–D15, each with cost and reversal path.
 5. The one feature file you are implementing, plus the files of its declared dependencies.
 
 A feature file is designed to be self-sufficient: implement from its Scope and Contract sections, and
@@ -87,6 +89,7 @@ pytest tests/unit/test_settings_defaults.py::test_every_documented_default      
 tourganize doctor                         # resolved settings, adapter selection, per-port health
 tourganize catalog show                   # the declared Component Kinds; `validate` exits 0 or 3
 tourganize catalog gaps --kind lodging    # the Gap Report; `--set '<json>'` supplies known values
+tourganize catalog agenda --mentioned lodging   # the Planning Agenda: bands, ranks, reason codes
 docker compose --profile dev-cpu run --rm app tourganize doctor
 ```
 
@@ -97,11 +100,10 @@ rather than skip — that is the test which proves the gate rejects a planted vi
 If a contract has to be weakened to make a feature compile, that needs an ADR entry, not a config
 tweak.
 
-Commands added by later features (each defined in its own spec): `catalog agenda` (F04),
-`chat` (F07), `llm probe` (F08), `messages lint` (F10), `eval` / `eval report` /
-`eval parity` (F11, F21), `sessions` / `resume` (F12), `export` (F13), `tools list|call` (F15),
-`docs add|list|query|index` (F18, F19). Run one golden conversation with
-`tourganize eval --only <conversation_id>`.
+Commands added by later features (each defined in its own spec): `chat` (F07), `llm probe` (F08),
+`messages lint` (F10), `eval` / `eval report` / `eval parity` (F11, F21), `sessions` / `resume` (F12),
+`export` (F13), `tools list|call` (F15), `docs add|list|query|index` (F18, F19). Run one golden
+conversation with `tourganize eval --only <conversation_id>`.
 
 ## Architecture: the two rules everything follows
 
@@ -137,7 +139,9 @@ all control flow and no wording; the surface and Language Services turn Acts int
 ### Ports and the feature that introduces each
 
 `Clock`, `TelemetrySink` (F01) · `ComponentCatalog` (F02, `schema_for` completed by F03) ·
-`PriorityPolicy` (F04) · `TurnInterpreter`, `OptionSlatePlanner` (F05) · `OptionSource` (F06) ·
+`PriorityPolicy` (F04, declared in the domain and re-exported by `ports/catalog.py`, because
+`build_agenda` consumes it and the domain may import nothing) · `TurnInterpreter`,
+`OptionSlatePlanner` (F05) · `OptionSource` (F06) ·
 `PresentationSurface` (F07) · `LlmGateway` (F08) · `LanguageDetector` (F10) ·
 `SessionRepository` (F12) · `ItineraryRenderer` (F13) · `ToolBroker` (F15) ·
 `KnowledgeCorpus`, `TextExtractor`, `PassageSplitter` (F18) · `KnowledgeRetriever`, `EmbeddingModel` (F19).
@@ -151,9 +155,13 @@ These are the client's stated rules and the reasons the design is shaped as it i
 guards it; if one starts failing, fix the code, not the test.
 
 - **Mentioned-First** is a hard rule and lives in `build_agenda`, never in the `PriorityPolicy` — a
-  replacement policy must be *unable* to violate it.
-- **Outcome dependencies are soft.** `requires_outcome_of` constrains ordering only. A traveller who
-  wants only a hotel is never blocked waiting on flights they never mentioned.
+  replacement policy must be *unable* to violate it. `PlanningAgenda` refuses an interleaved sequence
+  of entries outright, and a policy is handed one band at a time, so it never learns another exists.
+  A policy that invents, drops or repeats a `kind_key` is refused at the seam with
+  `ContractViolationError`: replaceable means checked, not trusted.
+- **Outcome dependencies are soft.** `requires_outcome_of` constrains ordering only, and only while
+  the kind it names is open *in the same agenda band*. A traveller who wants only a hotel is never
+  blocked waiting on flights they never mentioned. `awaited_within` is that rule, in one place.
 - **Blocking gaps are resolved before sourcing; optional filters never block**, are asked at most once,
   and are bundled (max 2) alongside the first slate. A blocking obligation may be satisfied in more
   than one way — `BlockingRule.any_of` is a list of field groups, never a per-field flag — and a

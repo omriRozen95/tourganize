@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tourganize.domain.catalog import DEFAULT_AGENDA_FAILURE_SKIP
 from tourganize.platform.settings import Settings, unrecognised_keys
 
 
@@ -18,8 +19,20 @@ def test_every_documented_default() -> None:
     assert settings.data_dir == Path("var")
     assert settings.telemetry_sink == "jsonl"
     assert settings.telemetry_path == Path("var/telemetry.jsonl")
+    assert settings.priority_policy == "weighted"
+    assert settings.agenda_failure_skip == 2
     assert settings.secrets_file is None
     assert dict(settings.secrets) == {}
+
+
+def test_the_agenda_skip_default_is_the_domain_s_one_definition_of_it() -> None:
+    """One documented default, one definition: the rule it configures lives in the domain."""
+    assert Settings.from_env({}).agenda_failure_skip == DEFAULT_AGENDA_FAILURE_SKIP
+
+
+def test_the_priority_policy_can_be_swapped_by_one_key() -> None:
+    assert Settings.from_env({"TOURGANIZE_PRIORITY_POLICY": "fixed"}).priority_policy == "fixed"
+    assert Settings.from_env({"TOURGANIZE_AGENDA_FAILURE_SKIP": "5"}).agenda_failure_skip == 5
 
 
 def test_log_format_defaults_to_json_outside_dev() -> None:
@@ -85,6 +98,13 @@ def test_unrecognised_keys_are_reported_but_never_fatal() -> None:
     environ = {"TOURGANIZE_ENV": "dev", "TOURGANIZE_LGO_LEVEL": "DEBUG", "PATH": "/usr/bin"}
     assert Settings.from_env(environ).env == "dev"
     assert unrecognised_keys(environ) == ("TOURGANIZE_LGO_LEVEL",)
+
+
+def test_the_keys_this_release_reads_are_not_reported_as_unrecognised() -> None:
+    """Every key added to the table has to be added to ``KNOWN_KEYS`` in the same change."""
+    environ = {"TOURGANIZE_PRIORITY_POLICY": "fixed", "TOURGANIZE_AGENDA_FAILURE_SKIP": "3"}
+
+    assert unrecognised_keys(environ) == ()
 
 
 def test_secret_keys_are_not_reported_as_unrecognised() -> None:

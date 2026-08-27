@@ -17,6 +17,10 @@ from tourganize.platform.settings import Settings
         ("TOURGANIZE_LOG_FORMAT", "xml"),
         ("TOURGANIZE_LOG_LEVEL", "CHATTY"),
         ("TOURGANIZE_TELEMETRY_SINK", "syslog"),
+        ("TOURGANIZE_PRIORITY_POLICY", "clairvoyant"),
+        ("TOURGANIZE_AGENDA_FAILURE_SKIP", "soon"),
+        ("TOURGANIZE_AGENDA_FAILURE_SKIP", "0"),
+        ("TOURGANIZE_AGENDA_FAILURE_SKIP", "-1"),
     ],
 )
 def test_invalid_enum_values_are_rejected(key: str, value: str) -> None:

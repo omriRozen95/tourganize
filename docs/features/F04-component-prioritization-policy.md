@@ -86,6 +86,28 @@ class PriorityPolicy(Protocol):
     def order(self, candidates: Sequence[ComponentKind], plan: TripPlan) -> Sequence[str]: ...
 ```
 
+Four things the shipped code spells differently from the sketch above, each forced by a rule that
+outranks this file:
+
+- `build_agenda(plan, kinds, policy, *, plannable=None, failure_skip=...)` takes the **declared
+  Component Kinds** rather than a `ComponentCatalog`, and `PriorityPolicy` is *defined* in
+  `domain/catalog/prioritization.py` and re-exported by `ports/catalog.py`. The domain may import
+  nothing outside itself — `tourganize.ports` included — and `build_agenda` is a domain function, so a
+  port-typed parameter is not available to it. This is the same move F02 made for `TourganizeError`,
+  and `from tourganize.ports.catalog import PriorityPolicy` still works. `ContractViolationError`
+  moves for the same reason and keeps its documented import path.
+- `next_actionable()` is the no-argument method of the Contract block, not the four-argument function
+  of Scope item 4. Plannability reaches `build_agenda` as the precomputed map the Open questions
+  prefer, and becomes the `not_plannable` reason code; the reason codes are the whole of what
+  actionability means, so there is one place to read it from.
+- The run of failures a skip counts lives on `PlanComponent.consecutive_failures`, incremented by
+  `advance_to` and cleared when a slate finally arrives. Nowhere else could count it honestly, and
+  F12 persists it with the plan for free.
+- `FixedOrderPolicy(kind_keys, *, verbatim=False)` has one extra mode. Configured normally it is total
+  — a permutation of whatever candidates it is handed — which is what makes it usable as
+  `TOURGANIZE_PRIORITY_POLICY=fixed` and what the contract suite runs. `verbatim=True` returns its
+  list unchanged so a test can drive the seam's refusals; nothing in production sets it.
+
 **Ports consumed:** `ComponentCatalog`.
 
 **Ports provided:** `PriorityPolicy`, with `WeightedCatalogPolicy` (default) and

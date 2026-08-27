@@ -122,6 +122,12 @@ LEGAL_TRANSITIONS: Final[Mapping[ComponentStatus, frozenset[ComponentStatus]]] =
 #: again unless something reopens it.
 SETTLED_STATUSES: Final = frozenset({ComponentStatus.SELECTED, ComponentStatus.DECLINED})
 
+#: Reaching one of these is proof that sourcing worked, so the run of failures F04's Agenda
+#: counts starts again from zero. ``SOURCING`` is deliberately not here: a retry that is only
+#: *attempted* has proved nothing yet, and clearing the count there would let a Kind that fails
+#: every single time be retried for ever.
+_CLEARS_FAILURES: Final = frozenset({ComponentStatus.AWAITING_CHOICE, ComponentStatus.SELECTED})
+
 
 @dataclass
 class PlanComponent:
@@ -130,6 +136,12 @@ class PlanComponent:
     ``requirements`` is the Requirement Set F03 introduced. It is ``None`` until the first
     value arrives, and nothing in this module looks inside it: what is missing from it is
     ``analyse()``'s question, and merging into it is ``with_updates``'s.
+
+    ``consecutive_failures`` is counted by :meth:`advance_to`, which is the only thing that
+    could count it honestly, and read by F04's Planning Agenda: a Component Kind that keeps
+    failing to source is eventually stepped over so it cannot deadlock the conversation. It is
+    a *run* rather than a total — a slate that finally arrives clears it — because "it failed
+    twice, a week ago" is not a reason to stop trying.
     """
 
     kind_key: str
@@ -138,6 +150,7 @@ class PlanComponent:
     slates: tuple[OptionSlate, ...] = ()
     selection: Selection | None = None
     mentioned_on_turn: int | None = None
+    consecutive_failures: int = 0
 
     def __post_init__(self) -> None:
         require_text(self.kind_key, "PlanComponent.kind_key")
@@ -175,3 +188,7 @@ class PlanComponent:
                 f"transition; legal from {self.status.name}: {legal or 'nothing, it is terminal'}"
             )
         self.status = status
+        if status is ComponentStatus.FAILED:
+            self.consecutive_failures += 1
+        elif status in _CLEARS_FAILURES:
+            self.consecutive_failures = 0

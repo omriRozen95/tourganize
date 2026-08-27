@@ -12,23 +12,24 @@ and finally exports a written plan.
 | [docs/roadmap.md](docs/roadmap.md) | The 25 features, their dependency graph and the build order. **Read this first.** |
 | [docs/architecture/overview.md](docs/architecture/overview.md) | Bounded contexts, package layout, ports, the shape of one turn |
 | [docs/architecture/glossary.md](docs/architecture/glossary.md) | The naming authority |
-| [docs/architecture/decisions.md](docs/architecture/decisions.md) | D1–D13: each decision, its cost, and the feature that reverses it |
+| [docs/architecture/decisions.md](docs/architecture/decisions.md) | D1–D15: each decision, its cost, and the feature that reverses it |
 | `tourganize/` | The application |
 | `config/` | Catalog, prompts and messages — data, not code |
 | `tests/` | See [tests/README.md](tests/README.md) for the conventions |
 
 ## Status
 
-**F03 has landed: what has to be known before anything can be planned.** On top of F01's
-foundation and F02's Trip Plan, each Component Kind now declares a **Requirement Schema** —
-which fields describe the traveller's wish, which of them block planning and which are only
-filters — as data in [`config/catalog/schemas/`](config/catalog/schemas). Blocking is a rule
-over *groups* of fields, so the client's own case works: a date range **or** an explicit
-check-in and check-out pair satisfies the same obligation. `tourganize catalog gaps` prints
-the resulting **Gap Report**. Flights, lodging and ground transport remain configuration: a
-test asserts that grepping `tourganize/` for a shipped `kind_key` returns nothing at all. Next
-is [F04](docs/features/F04-component-prioritization-policy.md), which decides what to plan
-first.
+**F04 has landed: what to plan next.** On top of F01's foundation, F02's Trip Plan and F03's
+Requirement Schemas, a Trip Plan now yields a **Planning Agenda**: the Component Kinds the
+traveller raised, first and always (the client's Mentioned-First Rule, which lives in
+`build_agenda` and is not configurable), then the ones they did not — each band ordered by a
+**replaceable Priority Policy** built from the weights and Outcome Dependencies declared in
+[`config/catalog/components.yaml`](config/catalog/components.yaml). Outcome Dependencies are
+soft: a traveller who wants only a hotel is never held waiting on flights they never mentioned.
+`tourganize catalog agenda --mentioned lodging` prints the order, the bands and the reason codes;
+`TOURGANIZE_PRIORITY_POLICY=fixed` re-orders it with no code change. The importance metric the
+client deferred now has a home to be defined in. Next is
+[F05](docs/features/F05-dialogue-director-and-session-lifecycle.md), the dialogue director.
 
 ## Getting started
 
@@ -42,6 +43,7 @@ tourganize catalog validate # exit 0, or exit 3 naming every problem in the cata
 tourganize catalog gaps --kind lodging                      # what is still blocking planning
 tourganize catalog gaps --kind lodging \
   --set '{"place": "Paris", "date_range": "2026-10-23/2026-10-28"}'   # is_plannable: true
+tourganize catalog agenda --mentioned lodging               # what would be planned next, and why
 tourganize chat            # exits 2 until F07 implements it
 ```
 
@@ -79,6 +81,8 @@ secrets redacted, and reports any `TOURGANIZE_*` key it does not recognise.
 | `TOURGANIZE_SECRETS_FILE` | Optional `KEY=value` file, merged *under* the environment | unset |
 | `TOURGANIZE_TELEMETRY_SINK` | `null` or `jsonl` | `jsonl` |
 | `TOURGANIZE_TELEMETRY_PATH` | Where the JSONL sink writes | `${TOURGANIZE_DATA_DIR}/telemetry.jsonl` |
+| `TOURGANIZE_PRIORITY_POLICY` | Which Priority Policy orders the Agenda: `weighted` or `fixed` | `weighted` |
+| `TOURGANIZE_AGENDA_FAILURE_SKIP` | Sourcing failures in a row before a Component Kind is skipped | `2` |
 
 A `TOURGANIZE_*` key ending in `_KEY`, `_API_KEY`, `_TOKEN`, `_SECRET`, `_PASSWORD` or
 `_CREDENTIALS` is treated as a secret: it is wrapped in `SecretValue`, which redacts in

@@ -379,3 +379,42 @@ pass one by accident.
 logic does not move; only the receiver does. One module, and the call sites F05 and F12 will have by
 then. Putting the schema *on* the set is the direction this decision closes, and reopening it means
 answering the persistence question first.
+
+---
+
+## D15 — Domain-side declaration of the `PriorityPolicy` port, re-exported from `ports/`
+
+**Status:** accepted · **Owning feature:** [F04](../features/F04-component-prioritization-policy.md) · **Reversed by:** no planned feature (see below)
+
+**Decision.** `PriorityPolicy` is *defined* in `tourganize/domain/catalog/prioritization.py` and
+re-exported by `tourganize/ports/catalog.py`, which stays the module every caller imports it from.
+`ContractViolationError` moves the same way — defined in `domain/errors.py`, read from
+`platform/errors.py`. `build_agenda(plan, kinds, policy, ...)` therefore takes the **declared
+Component Kinds** rather than a `ComponentCatalog`. F04's Contract block writes
+`build_agenda(plan, catalog, policy)` and places the protocol in `ports/catalog.py`; this entry
+records the amendment, because a normative Contract is not something to change quietly.
+
+**Rationale.** The Mentioned-First Rule has to live in the domain — it is the client's hard rule, and
+D3 turns on a policy being unable to reach across the bands — and the domain may import nothing but
+the standard library and itself, `tourganize.ports` and `tourganize.platform` included (import-linter
+contract 1, plus the AST check in `tests/architecture/`). A domain function consequently cannot name a
+port type in a signature or raise a platform error. Three ways out: weaken contract 1 for one type
+name; declare a second, structurally identical protocol inside the domain; or define each type once,
+where the domain can reach it, and re-export it from the module where a reader looks for it. The third
+is what F02 already did for `TourganizeError`, so it is a precedent rather than a new idea, and the
+second is exactly the two-definitions drift `domain/invariants.py` was created to end.
+
+**Cost.** The physical home of a port protocol no longer matches its conceptual one, so somebody
+grepping `tourganize/ports/` for `Protocol` finds one fewer than the port list says exists; both
+modules carry a docstring paragraph explaining why, and that explanation is now something to keep
+true. Handing `build_agenda` a `Sequence[ComponentKind]` also means the caller does the one thing the
+catalog would have done — `catalog.kinds()` — and that `build_agenda` filters disabled Kinds itself
+rather than relying on which accessor it was called with.
+
+**Reversal path.** If a later feature moves Agenda construction out of the domain and into an
+application service, the protocol moves into `ports/catalog.py` and the error back into
+`platform/errors.py`, with no change at any import site: every caller already imports from those two
+modules. Nothing outside the domain may depend on the *definition* site: `tourganize.ports.catalog`
+is the documented import path for the protocol and `tourganize.platform.errors` for the error, and
+code that reaches past them is what would make this reversal expensive.
+
