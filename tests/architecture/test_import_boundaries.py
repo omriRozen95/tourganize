@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 
+import pytest
 from boundaries import (
     ALLOWED_IMPORTS,
     ImportEdge,
@@ -14,6 +15,11 @@ from boundaries import (
     judge,
     planted_violation,
 )
+
+#: These tests plant a file in the real ``tourganize/`` tree and read it back, so they may
+#: never run beside each other on two workers. One group name keeps the whole directory on a
+#: single xdist worker; without ``-n`` the marker does nothing at all.
+pytestmark = pytest.mark.xdist_group("repo_tree")
 
 
 def test_the_tree_satisfies_every_import_contract() -> None:

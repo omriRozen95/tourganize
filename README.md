@@ -79,11 +79,24 @@ docker compose --profile dev-cpu run --rm app tourganize doctor
 ## Checks
 
 ```bash
+scripts/check                         # all four gates at once, and every verdict in one report
+scripts/check tests/unit/test_agenda.py   # pytest narrowed; the other gates still run
+scripts/check --cov                   # …plus the coverage report CI prints
+```
+
+The gates are independent, so running them one at a time only buys four round-trips and a report
+that stops at the first failure. Individually they are still:
+
+```bash
 ruff check . && ruff format --check .
 mypy --strict tourganize
 lint-imports                          # the DDD boundary; a failure here is a design regression
 pytest
 ```
+
+Coverage is not in `addopts`: nothing gates on it, and it roughly doubles the cost of the
+single-file runs that dominate an edit/check loop. CI asks for it explicitly, and so does
+`scripts/check --cov`.
 
 ## Configuration
 

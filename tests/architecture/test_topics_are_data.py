@@ -11,7 +11,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
+import pytest
 from boundaries import PACKAGE_ROOT, REPO_ROOT
+
+#: These tests plant a file in the real ``tourganize/`` tree and read it back, so they may
+#: never run beside each other on two workers. One group name keeps the whole directory on a
+#: single xdist worker; without ``-n`` the marker does nothing at all.
+pytestmark = pytest.mark.xdist_group("repo_tree")
 
 #: The Component Kinds shipped in ``config/catalog/components.yaml``. They are allowed to
 #: appear in configuration, fixtures, tests and documentation — and nowhere in the package.
