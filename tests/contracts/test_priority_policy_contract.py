@@ -5,7 +5,8 @@ asserted here is something the port promises, never something one policy happens
 shipped policies order the same candidates differently on purpose, so nothing about *which*
 order comes out can be asserted — only that whatever comes out is an order of exactly those
 Component Kinds, that it comes out the same way twice, and that ``build_agenda`` can be trusted
-to concatenate the bands whatever a policy answers.
+to concatenate the bands, and to settle the declared Outcome Dependencies inside each of them,
+whatever a policy answers.
 
 ``FixedOrderPolicy(verbatim=True)`` is deliberately absent from :data:`POLICIES`: its whole
 purpose is to *break* this contract so that the seam refusing it can be tested (see
@@ -21,7 +22,7 @@ import pytest
 
 from tourganize.adapters.catalog.priority import FixedOrderPolicy, WeightedCatalogPolicy
 from tourganize.adapters.clock.fake import DEFAULT_MOMENT
-from tourganize.domain.catalog import ComponentKind, build_agenda
+from tourganize.domain.catalog import ComponentKind, PlanningAgenda, build_agenda
 from tourganize.domain.trip import TripPlan
 from tourganize.ports.catalog import PriorityPolicy
 
@@ -49,6 +50,23 @@ def a_plan(*mentioned: str) -> TripPlan:
     for turn_index, kind_key in enumerate(mentioned):
         plan.mark_mentioned(kind_key, turn_index)
     return plan
+
+
+def labelled_before_its_blocker(agenda: PlanningAgenda) -> list[str]:
+    """Every entry that names a blocker it ranks *ahead* of, as readable counterexamples.
+
+    An empty list is the invariant: an Agenda's order and its ``blocked_by`` labels say the
+    same thing. Asserted as a property rather than as an expected order, because *which* order
+    a policy answers with is precisely what this port does not promise.
+    """
+    position = {entry.kind_key: index for index, entry in enumerate(agenda.entries)}
+    return [
+        f"{entry.kind_key} (rank {entry.rank} of {entry.band.name}) awaits {blocker}, "
+        f"which the Agenda ranks after it"
+        for entry in agenda.entries
+        for blocker in entry.blocked_by
+        if position[blocker] > position[entry.kind_key]
+    ]
 
 
 @pytest.mark.parametrize("build", POLICIES.values(), ids=POLICIES)
@@ -125,6 +143,25 @@ def test_an_outcome_dependency_is_never_left_behind_by_the_agenda(build: PolicyB
 
     assert entries["beta"].blocked_by == ("gamma",)
     assert entries["alpha"].blocked_by == ()
+
+
+@pytest.mark.parametrize("build", POLICIES.values(), ids=POLICIES)
+@pytest.mark.parametrize(
+    "mentioned", [(), ("beta",), ("beta", "gamma"), ("alpha", "beta", "gamma")]
+)
+def test_the_order_and_the_blocked_by_labels_never_disagree(
+    build: PolicyBuilder, mentioned: tuple[str, ...]
+) -> None:
+    """``blocked_by`` says "this ranks after that", so the Agenda must rank it after that.
+
+    ``build_agenda`` owns the ordering (D16), which is why this holds for a policy that has
+    never read ``requires_outcome_of`` — the fixed policy has not — and for one configured to
+    put ``beta`` first. Every partition of :data:`DECLARED` into the two bands is covered,
+    because the rule applies inside a band and nowhere else.
+    """
+    agenda = build_agenda(a_plan(*mentioned), DECLARED, build())
+
+    assert labelled_before_its_blocker(agenda) == []
 
 
 def test_the_policies_do_not_all_answer_the_same_thing() -> None:

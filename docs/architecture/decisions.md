@@ -68,7 +68,9 @@ is a hard, non-configurable rule: Kinds the traveller named outrank Kinds they d
 band, order comes from a **declarative Priority Policy** read from the Component Catalog: each
 Component Kind declares a `priority_weight` and its `requires_outcome_of` Outcome Dependencies. The
 shipped default weights are `air_travel > lodging > ground_transport`, on the grounds that air travel
-constrains dates and cost the most and is the least substitutable.
+constrains dates and cost the most and is the least substitutable. (Which of the two declarations the
+*policy* applies narrowed later: `build_agenda` applies `requires_outcome_of`, for the same reason it
+owns Mentioned-First — see D16.)
 
 **Rationale.** The client explicitly deferred the metric, so it must not become branches. Weights plus
 dependencies in configuration cover every ordering the client is likely to want (including "hotels
@@ -418,3 +420,45 @@ modules. Nothing outside the domain may depend on the *definition* site: `tourga
 is the documented import path for the protocol and `tourganize.platform.errors` for the error, and
 code that reaches past them is what would make this reversal expensive.
 
+---
+
+## D16 — Within-band Outcome Dependency ordering lives in `build_agenda`, not in the Priority Policy
+
+**Status:** accepted · **Owning feature:** [F04](../features/F04-component-prioritization-policy.md) · **Reversed by:** no planned feature (see below)
+
+**Decision.** `build_agenda` applies the declared Outcome Dependencies to whatever order the injected
+`PriorityPolicy` returns for a band: an entry whose blocker is open **in the same band** is placed
+after it, and the policy's order is preserved verbatim everywhere the declarations do not contradict
+it. The `blocked_by` label and the position are computed from one call to `awaited_within`, so they
+cannot disagree. F04's Scope item 3 gives the ordering to the policy; this entry records the amendment.
+A policy may still prefer dependency order — `WeightedCatalogPolicy` does — but nothing depends on it
+doing so, and a policy that never reads `requires_outcome_of` is a correct policy.
+
+**Rationale.** F04 states one rule in one sentence: *"if kind B declares `requires_outcome_of: [A]` and
+A is also open in the same band, B ranks after A and records `blocked_by=("A",)`"*. Giving the ordering
+half to the policy and the labelling half to `build_agenda` let the two come apart, and they did:
+`FixedOrderPolicy` reads no `requires_outcome_of` at all, and `TOURGANIZE_PRIORITY_POLICY=fixed` is a
+documented production value, so a catalog that declares a dependent Kind before the Kind it awaits
+produced an entry at rank 0 labelled as awaiting something the Agenda had ranked *after* it. F05 reads
+`reason_code` for control flow and F11 asserts on `explain()`, so a label that contradicts the order is
+not cosmetic. The fix is the one D3 already chose for Mentioned-First: a rule a replaceable policy must
+not be able to break does not live in the policy. Refusing a policy that ignores dependencies at the
+seam was the alternative, and it would have made the documented `fixed` value unusable.
+
+**Cost.** `PriorityPolicy.order` is no longer the last word on a band's order, so "everything inside
+`order` is free to change" now has one exception a policy author has to know about: a declared
+dependency will move their answer. `WeightedCatalogPolicy`'s own dependency-aware sort becomes
+deliberately redundant — kept because it costs nothing and leaves the shipped path with nothing to
+adjust, but no longer the guarantee, which is a duplication that has to stay honest.
+`build_agenda` also has to break dependency cycles rather than loop, which is why the domain now holds
+one `logging` call: `catalog_problems` rejects a cycle before any catalog can load, so the message is
+unreachable through a wired application, but a hang would be a worse failure than an arbitrary order.
+`logging` is standard library and the logger is obtained by `__name__`, so the domain still names no
+module outside itself and repeats no configuration.
+
+**Reversal path.** Delete `_dependencies_first` from `tourganize/domain/catalog/prioritization.py` and
+the ordering falls back to whatever the policy answers, with `blocked_by` unchanged — which is exactly
+the state this decision fixed, so the reversal is only sound together with a policy contract that
+*requires* dependency-respecting output and a seam that enforces it. The tests that would fail first
+are `test_no_policy_can_make_the_order_and_the_labels_disagree` and the parametrised
+`test_the_order_and_the_blocked_by_labels_never_disagree` in the contract suite.

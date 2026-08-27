@@ -214,6 +214,37 @@ def test_declining_settles_a_kind_for_good(frozen_clock: FrozenClock) -> None:
     assert plan.open_kinds() == ()
 
 
+def test_marking_a_kind_selected_needs_no_slate_and_settles_it(
+    frozen_clock: FrozenClock,
+) -> None:
+    """The state ``catalog agenda`` describes, produced by the aggregate rather than assembled
+    from outside it: SELECTED, legal history, and no Selection to invent."""
+    plan = plan_at(frozen_clock.now())
+
+    plan.mark_selected("alpha")
+
+    assert plan.component("alpha").status is S.SELECTED
+    assert plan.component("alpha").selection is None
+    assert plan.settled_kinds() == ("alpha",)
+    assert plan.completeness().selected == ("alpha",)
+
+
+def test_marking_a_kind_selected_is_refused_once_something_has_been_offered(
+    frozen_clock: FrozenClock, option_factory: OptionFactory
+) -> None:
+    """Once a slate exists there is a Plan Option to name, so ``record_selection`` is the only
+    honest way to record the choice."""
+    plan = plan_at(frozen_clock.now())
+    source(plan, "alpha")
+    plan.record_slate(OptionSlate(kind_key="alpha", round_index=0, options=(option_factory("a1"),)))
+
+    with pytest.raises(InvariantViolationError) as raised:
+        plan.mark_selected("alpha")
+
+    assert "record_selection" in str(raised.value)
+    assert plan.component("alpha").status is S.AWAITING_CHOICE
+
+
 def test_completeness_across_selected_declined_and_open(
     frozen_clock: FrozenClock, option_factory: OptionFactory
 ) -> None:

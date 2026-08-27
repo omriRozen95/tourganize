@@ -323,8 +323,9 @@ and pops the Agenda; intent `refine` merges new Requirement Values and re-enters
 
 Mentioned-First is enforced in one place: the Agenda is rebuilt every turn by `build_agenda` as
 `ordered(mentioned & unsettled) + ordered(unmentioned & not declined)`, where `ordered` is the
-replaceable Priority Policy applied to one band at a time, and the Director only ever plans
-`agenda.next_actionable()`. Proactive Offers begin only when `agenda.is_mentioned_band_empty()`.
+replaceable Priority Policy applied to one band at a time and then adjusted for the Outcome
+Dependencies open in that band (D16), and the Director only ever plans `agenda.next_actionable()`.
+Proactive Offers begin only when `agenda.is_mentioned_band_empty()`.
 
 ---
 

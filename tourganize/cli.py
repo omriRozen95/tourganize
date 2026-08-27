@@ -24,7 +24,8 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Final, TextIO
 
 from tourganize import __version__
@@ -43,7 +44,7 @@ from tourganize.domain.requirements import (
     RequirementUpdate,
     analyse,
 )
-from tourganize.domain.trip import ComponentStatus, TripPlan
+from tourganize.domain.trip import TripPlan
 from tourganize.platform.errors import ConfigurationError
 from tourganize.platform.logging import configure_logging
 from tourganize.platform.settings import Settings, unrecognised_keys
@@ -76,24 +77,57 @@ PLANNED_COMMANDS: Final[Mapping[str, tuple[str, str]]] = {
     "docs": ("F18", "the Knowledge Corpus: add, list, query, index"),
 }
 
-#: What ``catalog agenda`` accepts: one comma-separated list of ``kind_key`` per state a Plan
-#: Component can be in before a conversation starts. Declared as data because all three are
-#: parsed and applied the same way, and a fourth would be one row.
-_AGENDA_ARGUMENTS: Final[Mapping[str, str]] = {
-    "mentioned": "Component Kinds the traveller raised, earliest first",
-    "settled": "Component Kinds already chosen",
-    "declined": "Component Kinds the traveller turned down",
-}
 
-#: How ``catalog agenda`` gets a component to SELECTED without an Option Slate to choose from.
-#: The CLI has no Option Source (F06), so it walks the same Component Status edges sourcing
-#: would rather than inventing a Selection nobody made.
-_TO_SELECTED: Final = (
-    ComponentStatus.READY,
-    ComponentStatus.SOURCING,
-    ComponentStatus.AWAITING_CHOICE,
-    ComponentStatus.SELECTED,
-)
+@dataclass(frozen=True, slots=True)
+class _AgendaArgument:
+    """One ``catalog agenda`` flag: the help text it offers, and what it does to a Trip Plan.
+
+    The two live together because they are the whole of what the flag *is*. Parsing is shared
+    — every one of them is a comma-separated list of ``kind_key`` — so a fourth flag is one
+    row of :data:`_AGENDA_ARGUMENTS` and the small function it names, and no edit to the
+    parser, the dispatch or either function that builds the plan.
+    """
+
+    help_text: str
+    apply: Callable[[TripPlan, Sequence[str]], None]
+
+
+def _mention_each(plan: TripPlan, kind_keys: Sequence[str]) -> None:
+    """Mention order becomes turn order: the first ``--mentioned`` Kind was raised on turn 0.
+
+    That is what a conversation would have recorded, and what F05 reads.
+    """
+    for turn_index, kind_key in enumerate(kind_keys):
+        plan.mark_mentioned(kind_key, turn_index)
+
+
+def _select_each(plan: TripPlan, kind_keys: Sequence[str]) -> None:
+    """Describe each Kind as already chosen.
+
+    The CLI has no Option Source (F06) and therefore no Plan Option a Selection could name, so
+    the aggregate's own ``mark_selected`` is what produces the state — nothing out here walks a
+    Component Status edge.
+    """
+    for kind_key in kind_keys:
+        plan.mark_selected(kind_key)
+
+
+def _decline_each(plan: TripPlan, kind_keys: Sequence[str]) -> None:
+    for kind_key in kind_keys:
+        plan.decline(kind_key)
+
+
+#: What ``catalog agenda`` accepts: one comma-separated list of ``kind_key`` per state a Plan
+#: Component can be in before a conversation starts. Order matters and is this order: a mention
+#: is a fact about a turn rather than a Component Status, and selecting before declining is what
+#: makes naming one Kind in both an illegal transition rather than a silently accepted one.
+_AGENDA_ARGUMENTS: Final[Mapping[str, _AgendaArgument]] = {
+    "mentioned": _AgendaArgument(
+        "Component Kinds the traveller raised, earliest first", _mention_each
+    ),
+    "selected": _AgendaArgument("Component Kinds already chosen", _select_each),
+    "declined": _AgendaArgument("Component Kinds the traveller turned down", _decline_each),
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -135,8 +169,8 @@ def _add_catalog_parser(subcommands: argparse._SubParsersAction[argparse.Argumen
         help='requirement values already known, as a JSON object: \'{"place": "Paris"}\'',
     )
     agenda = actions.add_parser("agenda", help="the Planning Agenda: what to plan next, and why")
-    for name, help_text in _AGENDA_ARGUMENTS.items():
-        agenda.add_argument(f"--{name}", default="", metavar="K1,K2", help=help_text)
+    for name, argument in _AGENDA_ARGUMENTS.items():
+        agenda.add_argument(f"--{name}", default="", metavar="K1,K2", help=argument.help_text)
 
 
 def main(
@@ -192,9 +226,7 @@ def main(
         if command == "catalog" and args.catalog_command == "agenda":
             return _catalog_agenda(
                 build_container(settings),
-                mentioned=args.mentioned,
-                settled=args.settled,
-                declined=args.declined,
+                supplied={name: str(getattr(args, name)) for name in _AGENDA_ARGUMENTS},
                 out=out,
                 err=err,
             )
@@ -312,9 +344,7 @@ def _requirements_from(schema: RequirementSchema, values: str | None) -> Require
 def _catalog_agenda(
     container: Container,
     *,
-    mentioned: str,
-    settled: str,
-    declined: str,
+    supplied: Mapping[str, str],
     out: TextIO,
     err: TextIO,
 ) -> int:
@@ -323,18 +353,17 @@ def _catalog_agenda(
     The closest thing to watching the dialogue decide what to do next before the dialogue
     exists: name what the traveller raised, what is already chosen and what they turned down,
     and the bands, ranks, reason codes and the entry that would be worked on now are printed.
+
+    ``supplied`` is the raw value of every flag :data:`_AGENDA_ARGUMENTS` declares, keyed by
+    its name — one argument rather than one per flag, so a fourth flag does not reach this
+    signature at all.
     """
     catalog = container.component_catalog
     try:
-        plan = _plan_from(
-            container,
-            mentioned=_kind_keys(mentioned),
-            settled=_kind_keys(settled),
-            declined=_kind_keys(declined),
-        )
+        plan = _plan_from(container, supplied)
     except (UnknownComponentKindError, IllegalTransitionError) as exc:
         # An unknown or disabled Kind, or arguments that contradict each other — the same Kind
-        # both settled and declined. Both are the invocation's fault, not the catalog's.
+        # both selected and declined. Both are the invocation's fault, not the catalog's.
         print(f"tourganize catalog agenda: {exc}", file=err)
         return EXIT_USAGE_ERROR
     agenda = build_agenda(
@@ -360,30 +389,21 @@ def _kind_keys(supplied: str) -> tuple[str, ...]:
     return tuple(key.strip() for key in supplied.split(",") if key.strip())
 
 
-def _plan_from(
-    container: Container,
-    *,
-    mentioned: Sequence[str],
-    settled: Sequence[str],
-    declined: Sequence[str],
-) -> TripPlan:
+def _plan_from(container: Container, supplied: Mapping[str, str]) -> TripPlan:
     """Build the Trip Plan the arguments describe, refusing a Kind the catalog does not declare.
 
-    Mention order becomes turn order — the first ``--mentioned`` Kind was raised on turn 0 —
-    because that is what a conversation would have recorded, and F05 reads it.
+    Every named Kind is checked before anything is applied, so a typo in the last flag does not
+    leave half a plan behind. Each flag is then applied by the function its row of
+    :data:`_AGENDA_ARGUMENTS` names, in that table's order.
     """
     catalog = container.component_catalog
-    for kind_key in (*mentioned, *settled, *declined):
-        catalog.kind(kind_key)  # raises for an unknown or disabled Kind, naming what is declared
+    parsed = {name: _kind_keys(value) for name, value in supplied.items()}
+    for kind_keys in parsed.values():
+        for kind_key in kind_keys:
+            catalog.kind(kind_key)  # raises for an unknown or disabled Kind, naming the declared
     plan = TripPlan(plan_id="cli", created_at=container.clock.now())
-    for turn_index, kind_key in enumerate(mentioned):
-        plan.mark_mentioned(kind_key, turn_index)
-    for kind_key in settled:
-        component = plan.ensure_component(kind_key)
-        for status in _TO_SELECTED:
-            component.advance_to(status)
-    for kind_key in declined:
-        plan.decline(kind_key)
+    for name, kind_keys in parsed.items():
+        _AGENDA_ARGUMENTS[name].apply(plan, kind_keys)
     return plan
 
 

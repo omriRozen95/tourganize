@@ -393,9 +393,9 @@ def test_catalog_agenda_reports_an_outcome_dependency_inside_a_band(tmp_path: Pa
     assert "next_actionable: alpha" in out
 
 
-def test_catalog_agenda_drops_what_is_settled_and_what_was_declined(tmp_path: Path) -> None:
+def test_catalog_agenda_drops_what_is_selected_and_what_was_declined(tmp_path: Path) -> None:
     code, out, _err = _run(
-        ["catalog", "agenda", "--mentioned", "alpha", "--settled", "alpha", "--declined", "beta"],
+        ["catalog", "agenda", "--mentioned", "alpha", "--selected", "alpha", "--declined", "beta"],
         _environ(tmp_path),
     )
 
@@ -436,7 +436,7 @@ def test_catalog_agenda_refuses_an_unknown_kind(tmp_path: Path) -> None:
 def test_catalog_agenda_refuses_arguments_that_contradict_each_other(tmp_path: Path) -> None:
     """Selected and declined are two different endings; a Kind cannot have both."""
     code, out, err = _run(
-        ["catalog", "agenda", "--settled", "alpha", "--declined", "alpha"], _environ(tmp_path)
+        ["catalog", "agenda", "--selected", "alpha", "--declined", "alpha"], _environ(tmp_path)
     )
 
     assert code == EXIT_USAGE_ERROR

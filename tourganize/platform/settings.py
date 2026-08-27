@@ -34,7 +34,7 @@ secrets file may only set ``TOURGANIZE_*`` keys: a stray key is refused rather t
 because a secret believed to be loaded is worse than one that is missing.
 
 ``TOURGANIZE_AGENDA_FAILURE_SKIP`` takes its default from the domain
-(:data:`~tourganize.domain.catalog.agenda.DEFAULT_AGENDA_FAILURE_SKIP`) rather than spelling a
+(:data:`~tourganize.domain.catalog.DEFAULT_AGENDA_FAILURE_SKIP`) rather than spelling a
 second ``2`` here: the rule it configures lives there, and a documented default has one
 definition. Anything below 1 is refused — a Component Kind skipped before it has failed even
 once could never be planned at all.
@@ -49,7 +49,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Final, Literal, TypeVar
 
-from tourganize.domain.catalog.agenda import DEFAULT_AGENDA_FAILURE_SKIP
+from tourganize.domain.catalog import DEFAULT_AGENDA_FAILURE_SKIP
 from tourganize.platform.errors import ConfigurationError
 from tourganize.platform.secrets import REDACTED, SecretValue
 

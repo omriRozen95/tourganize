@@ -11,6 +11,13 @@ of code (D3). Two declarations decide everything:
   ranks after the Kinds it reads *only* while those are open in the same band. The policy never
   sees another band, so it cannot express anything stronger than that even by mistake.
 
+``build_agenda`` applies that second constraint to whatever *any* policy answers, and is the
+authority on it (D16): this policy's own dependency-aware sort is a **preference**, not the
+guarantee, and it is deliberately redundant. It is kept because a policy whose answer already
+respects the declarations gives the Agenda nothing to adjust, so the shipped path does no
+reordering at all — and because ``order`` is a port method that may be read on its own. If the
+two ever disagreed, ``build_agenda`` would win and the Agenda would still be correct.
+
 Ties break by the order the catalog declares its Kinds in, which is why the port promises that
 order: two Kinds of equal weight must not swap places between one turn and the next, or the
 Agenda would flicker and the traveller would be asked about a different thing each turn for no

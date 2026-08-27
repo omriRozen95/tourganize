@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from tourganize import __version__
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -216,11 +218,35 @@ def test_a_schema_that_contradicts_the_catalog_exits_3(tmp_path: Path) -> None:
     assert result.stdout == ""
 
 
-def _agenda_keys(out: str) -> list[str]:
-    """The ``kind_key`` column of a printed Planning Agenda, in the order it was printed."""
+def _agenda_rows(out: str) -> list[list[str]]:
+    """The printed Planning Agenda's rows as columns: kind_key, band, rank, awaits, reason."""
     lines = out.splitlines()
     rule = next(index for index, line in enumerate(lines) if line and set(line) <= {"-", " "})
-    return [line.split()[0] for line in itertools.takewhile(bool, lines[rule + 1 :])]
+    return [line.split() for line in itertools.takewhile(bool, lines[rule + 1 :])]
+
+
+def _agenda_keys(out: str) -> list[str]:
+    """The ``kind_key`` column of a printed Planning Agenda, in the order it was printed."""
+    return [row[0] for row in _agenda_rows(out)]
+
+
+def _first_shipped_dependency() -> tuple[str, str]:
+    """The first declared Outcome Dependency of the shipped catalog, as (dependent, blocker).
+
+    Read from the file rather than written down, for the same reason as the helpers above: the
+    catalog is the only place a travel topic exists, and this suite must not become a second.
+    """
+    key: str | None = None
+    for line in SHIPPED_CATALOG.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- kind_key:"):
+            key = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("requires_outcome_of:") and key is not None:
+            declared = stripped.split(":", 1)[1].split("#")[0].strip().strip("[]")
+            blockers = [item.strip() for item in declared.split(",") if item.strip()]
+            if blockers:
+                return key, blockers[0]
+    raise AssertionError(f"{SHIPPED_CATALOG} declares no Outcome Dependency")
 
 
 def test_the_shipped_catalog_produces_the_planning_agenda(tmp_path: Path) -> None:
@@ -244,6 +270,37 @@ def test_the_shipped_catalog_produces_the_planning_agenda(tmp_path: Path) -> Non
     ]
     assert f"next_actionable: {mentioned}" in result.stdout
     assert "mentioned_band_empty: false" in result.stdout
+
+
+@pytest.mark.parametrize("policy", ["weighted", "fixed"])
+def test_the_shipped_catalog_orders_an_outcome_dependency_inside_a_band(
+    tmp_path: Path, policy: str
+) -> None:
+    """The Definition of Done's dependency case, against the files the application ships with:
+    both Kinds mentioned, the blocker planned first, the dependent labelled ``awaits_outcome``.
+
+    Run against **both** policies because the ordering is ``build_agenda``'s and not the
+    policy's (D16): ``fixed`` reads no ``requires_outcome_of`` at all and must still not plan a
+    Kind before the one it awaits.
+    """
+    dependent, blocker = _first_shipped_dependency()
+
+    result = _run(
+        "catalog",
+        "agenda",
+        "--mentioned",
+        f"{dependent},{blocker}",
+        tmp_path=tmp_path,
+        TOURGANIZE_PRIORITY_POLICY=policy,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    mentioned = [row for row in _agenda_rows(result.stdout) if row[1] == "MENTIONED"]
+    assert [row[0] for row in mentioned] == [blocker, dependent]
+    assert [row[2] for row in mentioned] == ["0", "1"]
+    assert mentioned[0][3] == "-"  # the blocker awaits nothing that is open in this band
+    assert (mentioned[1][3], mentioned[1][4]) == (blocker, "awaits_outcome")
+    assert f"next_actionable: {blocker}" in result.stdout
 
 
 def test_the_configured_policy_reaches_the_installed_command(tmp_path: Path) -> None:

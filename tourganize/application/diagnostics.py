@@ -14,10 +14,10 @@ from typing import Final
 
 from tourganize.application.composition import PENDING_PORTS, Container
 from tourganize.domain.catalog import build_agenda
-from tourganize.domain.errors import ContractViolationError, InvariantViolationError
+from tourganize.domain.errors import InvariantViolationError
 from tourganize.domain.invariants import is_aware
 from tourganize.domain.trip import TripPlan
-from tourganize.platform.errors import ConfigurationError
+from tourganize.platform.errors import ConfigurationError, ContractViolationError
 from tourganize.ports.platform import TelemetryEvent
 
 __all__ = ["CheckResult", "DoctorReport", "run_diagnostics"]
@@ -176,6 +176,12 @@ def _check_priority_policy(container: Container) -> CheckResult:
     invents a ``kind_key`` is refused at the Agenda's seam. Better to find that here than
     halfway through a conversation. A catalog that will not load is *not* reported again — the
     check above it already says why — because two lines about one broken file is one too many.
+
+    ``failure_skip`` is passed rather than defaulted, so this probe exercises the resolved value
+    of ``TOURGANIZE_AGENDA_FAILURE_SKIP`` and not the constant behind it. ``plannable`` is not:
+    computing it means loading every Requirement Schema, which is what ``catalog validate`` is
+    for, and the probe plan has no components, so no answer it could give would change the order
+    this check reports.
     """
     policy = container.priority_policy
     named = f"{type(policy).__name__} ({policy.policy_id})"
@@ -185,7 +191,9 @@ def _check_priority_policy(container: Container) -> CheckResult:
         return CheckResult("priority_policy", True, f"{named}: nothing to order yet")
     plan = TripPlan(plan_id=_PROBE_PLAN_ID, created_at=container.clock.now())
     try:
-        agenda = build_agenda(plan, kinds, policy)
+        agenda = build_agenda(
+            plan, kinds, policy, failure_skip=container.settings.agenda_failure_skip
+        )
     except (ContractViolationError, InvariantViolationError) as exc:
         return CheckResult("priority_policy", False, str(exc))
     order = ", ".join(entry.kind_key for entry in agenda.entries) or "nothing"

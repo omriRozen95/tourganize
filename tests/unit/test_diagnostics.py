@@ -175,6 +175,23 @@ def test_the_configured_policy_is_the_one_doctor_probes(
     assert catalog_file.exists()
 
 
+def test_the_probe_uses_the_resolved_agenda_failure_skip(
+    settings_factory: SettingsFactory, catalog_file: Path
+) -> None:
+    """The probe is built the way a turn will be, ``failure_skip`` included, so an impossible
+    value is a failing check rather than an exception out of a health report. ``Settings`` will
+    not resolve one, which is why the test has to write it in by hand."""
+    container = build_container(settings_factory())
+    impossible = replace(container, settings=replace(container.settings, agenda_failure_skip=0))
+
+    report = run_diagnostics(impossible, version="9.9.9")
+
+    policy = next(check for check in report.checks if check.name == "priority_policy")
+    assert not policy.ok
+    assert "failure_skip must be at least 1" in policy.detail
+    assert catalog_file.exists()
+
+
 def test_a_policy_that_breaks_its_contract_fails_doctor(
     settings_factory: SettingsFactory, catalog_file: Path
 ) -> None:

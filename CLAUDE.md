@@ -33,7 +33,7 @@ The next thing to build is `docs/features/F05-dialogue-director-and-session-life
 2. `docs/architecture/glossary.md` — the ubiquitous language. **Authoritative on naming.**
 3. `docs/architecture/overview.md` — contexts, ports, per-turn data flow, C1–C14 traceability, open
    client questions.
-4. `docs/architecture/decisions.md` — D1–D15, each with cost and reversal path.
+4. `docs/architecture/decisions.md` — D1–D16, each with cost and reversal path.
 5. The one feature file you are implementing, plus the files of its declared dependencies.
 
 A feature file is designed to be self-sufficient: implement from its Scope and Contract sections, and
@@ -161,7 +161,10 @@ guards it; if one starts failing, fix the code, not the test.
   `ContractViolationError`: replaceable means checked, not trusted.
 - **Outcome dependencies are soft.** `requires_outcome_of` constrains ordering only, and only while
   the kind it names is open *in the same agenda band*. A traveller who wants only a hotel is never
-  blocked waiting on flights they never mentioned. `awaited_within` is that rule, in one place.
+  blocked waiting on flights they never mentioned. `awaited_within` is that rule, in one place, and
+  like Mentioned-First the *ordering* it implies is applied in `build_agenda` and never in a
+  `PriorityPolicy` — order and `blocked_by` are computed from one answer, so no policy can make them
+  disagree (D16).
 - **Blocking gaps are resolved before sourcing; optional filters never block**, are asked at most once,
   and are bundled (max 2) alongside the first slate. A blocking obligation may be satisfied in more
   than one way — `BlockingRule.any_of` is a list of field groups, never a per-field flag — and a

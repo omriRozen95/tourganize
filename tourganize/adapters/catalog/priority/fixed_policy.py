@@ -13,6 +13,10 @@ handed, which is the order the Component Catalog declares its Kinds in. That is 
 ignore the weights.* An operator who wants to re-order a conversation by moving two blocks of
 YAML around, rather than by reasoning about numbers, has a policy that does that.
 
+It reads no ``priority_weight`` and no ``requires_outcome_of``, and that is not a gap: the
+Agenda applies declared Outcome Dependencies to whatever a policy answers (D16), so an operator
+who chooses ``fixed`` still never sees a Kind planned before the one it awaits.
+
 ``verbatim`` exists for one purpose: to return an order that does **not** match the candidates,
 so a test can prove ``build_agenda`` refuses a policy that invents or drops a ``kind_key``. A
 seam that is never driven wrong is a seam nobody knows is there. It is off by default and no

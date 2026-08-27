@@ -12,7 +12,7 @@ and finally exports a written plan.
 | [docs/roadmap.md](docs/roadmap.md) | The 25 features, their dependency graph and the build order. **Read this first.** |
 | [docs/architecture/overview.md](docs/architecture/overview.md) | Bounded contexts, package layout, ports, the shape of one turn |
 | [docs/architecture/glossary.md](docs/architecture/glossary.md) | The naming authority |
-| [docs/architecture/decisions.md](docs/architecture/decisions.md) | D1–D15: each decision, its cost, and the feature that reverses it |
+| [docs/architecture/decisions.md](docs/architecture/decisions.md) | D1–D16: each decision, its cost, and the feature that reverses it |
 | `tourganize/` | The application |
 | `config/` | Catalog, prompts and messages — data, not code |
 | `tests/` | See [tests/README.md](tests/README.md) for the conventions |
@@ -25,7 +25,8 @@ traveller raised, first and always (the client's Mentioned-First Rule, which liv
 `build_agenda` and is not configurable), then the ones they did not — each band ordered by a
 **replaceable Priority Policy** built from the weights and Outcome Dependencies declared in
 [`config/catalog/components.yaml`](config/catalog/components.yaml). Outcome Dependencies are
-soft: a traveller who wants only a hotel is never held waiting on flights they never mentioned.
+soft: a traveller who wants only a hotel is never held waiting on flights they never mentioned, and
+the ordering they do imply is applied by `build_agenda`, so no choice of policy can get it wrong.
 `tourganize catalog agenda --mentioned lodging` prints the order, the bands and the reason codes;
 `TOURGANIZE_PRIORITY_POLICY=fixed` re-orders it with no code change. The importance metric the
 client deferred now has a home to be defined in. Next is

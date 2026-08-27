@@ -14,7 +14,12 @@ Two consequences of that shape are worth stating, because they are the client's 
   among the Kinds that are open in the same band. A traveller who wants a hotel and never
   mentioned flights is never held waiting for flights: the dependency is in the other band, so
   it does not apply at all. :func:`awaited_within` is that rule, in one place, used both to
-  order a band and to record ``blocked_by`` on the entries.
+  order a band and to record ``blocked_by`` on the entries. The ordering is applied *here*,
+  after the policy has spoken, for the same reason the Mentioned-First Rule is: a policy that
+  ignores ``requires_outcome_of`` — ``TOURGANIZE_PRIORITY_POLICY=fixed`` is one — must not be
+  able to produce an entry labelled as awaiting a Kind it ranks *ahead* of. The label and the
+  position are computed from one call to :func:`awaited_within`, so they cannot disagree
+  (D16). A policy may still prefer dependency order; it no longer has to.
 * **A stalled Kind cannot deadlock the conversation.** A component that has failed to source
   ``failure_skip`` times in a row is still listed, carrying the reason code ``failed_skipped``
   so that the reason stays visible — but it is not actionable, and the Agenda moves past it.
@@ -23,13 +28,21 @@ The plannability of each component arrives as a mapping rather than as an inject
 Gap analysis is a pure function of a Requirement Schema and a Requirement Set, and schemas come
 from a port; taking the answers instead of the means to compute them keeps this module free of
 both, and makes every ordering case testable with a dict.
+
+The one thing this module reaches outside itself for is ``logging``, which is standard library
+and therefore inside the domain's import rule. It is used for exactly one message: an Outcome
+Dependency cycle, which ``catalog_problems`` rejects before a catalog can load and which is
+therefore unreachable through any wired application. ``logging.getLogger(__name__)`` is a
+descendant of the ``tourganize`` logger the platform configures, so the message is formatted
+and routed like every other one without the domain naming, or importing, that configuration.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Final, Protocol, runtime_checkable
 
 from tourganize.domain.catalog.agenda import (
     AWAITS_OUTCOME,
@@ -46,6 +59,10 @@ from tourganize.domain.errors import ContractViolationError, InvariantViolationE
 from tourganize.domain.trip import ComponentStatus, PlanComponent, TripPlan
 
 __all__ = ["PriorityPolicy", "awaited_within", "build_agenda"]
+
+#: A child of the logger ``tourganize.platform.logging`` configures, obtained by name so that
+#: the domain neither imports nor repeats that configuration. See the module docstring.
+_LOGGER: Final = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -65,7 +82,11 @@ class PriorityPolicy(Protocol):
     policy is replaceable, so its output is checked rather than trusted.
 
     What a policy may *not* do is decide anything about bands. It never sees more than one at
-    a time, so the Mentioned-First Rule cannot be weakened by a policy that means well.
+    a time, so the Mentioned-First Rule cannot be weakened by a policy that means well. Nor
+    does it decide Outcome Dependency order: :func:`build_agenda` applies that to whatever the
+    policy answers, so a policy that never looks at ``requires_outcome_of`` — the fixed policy
+    does not — is still a correct policy. Preferring dependency order is allowed and costs
+    nothing; relying on the policy to get it right is what D16 stopped doing.
     """
 
     @property
@@ -147,24 +168,91 @@ class _Context:
 def _band_entries(
     band: AgendaBand, candidates: Sequence[ComponentKind], context: _Context
 ) -> tuple[AgendaEntry, ...]:
-    """Order one band through the policy and turn the result into Agenda entries."""
+    """Order one band through the policy, settle its dependencies, and make the entries.
+
+    ``awaits`` is computed once and used twice — to place each Kind and to label it — which is
+    the whole of why an entry can no longer claim to await something it precedes.
+    """
     if not candidates:
         return ()
     by_key = {kind.kind_key: kind for kind in candidates}
     open_in_band = frozenset(by_key)
-    entries: list[AgendaEntry] = []
-    for rank, kind_key in enumerate(_ordered_or_raise(context.policy, candidates, context.plan)):
-        awaits = awaited_within(by_key[kind_key], open_in_band)
-        entries.append(
-            AgendaEntry(
-                kind_key=kind_key,
-                band=band,
-                rank=rank,
-                blocked_by=awaits,
-                reason_code=_reason_code(kind_key, awaits=awaits, context=context),
-            )
+    awaits = {key: awaited_within(kind, open_in_band) for key, kind in by_key.items()}
+    ordered = _dependencies_first(
+        _ordered_or_raise(context.policy, candidates, context.plan),
+        awaits=awaits,
+        declared=candidates,
+        band=band,
+    )
+    return tuple(
+        AgendaEntry(
+            kind_key=kind_key,
+            band=band,
+            rank=rank,
+            blocked_by=awaits[kind_key],
+            reason_code=_reason_code(kind_key, awaits=awaits[kind_key], context=context),
         )
-    return tuple(entries)
+        for rank, kind_key in enumerate(ordered)
+    )
+
+
+def _dependencies_first(
+    proposed: Sequence[str],
+    *,
+    awaits: Mapping[str, tuple[str, ...]],
+    declared: Sequence[ComponentKind],
+    band: AgendaBand,
+) -> tuple[str, ...]:
+    """Take the policy's order and move each Kind after the ones it awaits *in this band*.
+
+    A selection sort, and deliberately not a topological one: at every step it takes the
+    Kind the policy put **earliest** among those whose in-band dependencies are already
+    placed. Everywhere the declarations do not actually contradict the policy, the policy's
+    order therefore survives verbatim — the adjustment is the minimum that makes the Agenda's
+    ``blocked_by`` labels true, not a second opinion about priority.
+
+    This is the ordering half of the client's soft-dependency rule, and it lives here for the
+    reason Mentioned-First does: a replaceable policy must be *unable* to break it. ``awaits``
+    already excludes every dependency that is settled, declined, disabled or in the other
+    band, so nothing is held up by a Kind the traveller never raised.
+
+    A cycle has no order that satisfies it. Rather than loop for ever, the earliest *declared*
+    Kind of the deadlocked remainder is placed and one WARNING is emitted per band. It is
+    unreachable through a loaded catalog — ``catalog_problems`` refuses a cycle and every
+    ``ComponentCatalog`` adapter raises before a Kind reaches here — and it is the one case in
+    which an entry's ``blocked_by`` cannot agree with its rank, because nothing could.
+    """
+    remaining = list(proposed)
+    ordered: list[str] = []
+    placed: set[str] = set()
+    warned = False
+    while remaining:
+        available = next((key for key in remaining if placed.issuperset(awaits[key])), None)
+        if available is None:
+            available = _earliest_declared(remaining, declared)
+            if not warned:
+                warned = True
+                _warn_about_cycle(band, remaining)
+        ordered.append(available)
+        placed.add(available)
+        remaining.remove(available)
+    return tuple(ordered)
+
+
+def _earliest_declared(keys: Sequence[str], declared: Sequence[ComponentKind]) -> str:
+    """The one of ``keys`` the catalog declares first — a deterministic tie-break for a cycle."""
+    return next(kind.kind_key for kind in declared if kind.kind_key in keys)
+
+
+def _warn_about_cycle(band: AgendaBand, deadlocked: Sequence[str]) -> None:
+    """Say once, per band, that a cycle was broken by declaration order."""
+    _LOGGER.warning(
+        "Outcome Dependency cycle in the %s band among %s; ordering them by declaration "
+        "order instead",
+        band.name,
+        ", ".join(deadlocked),
+        extra={"kind": "prioritization"},
+    )
 
 
 def _ordered_or_raise(

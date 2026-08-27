@@ -8,7 +8,9 @@ configuration.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import logging
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 
 import pytest
 
@@ -21,12 +23,13 @@ from tourganize.domain.catalog import (
     NOT_PLANNABLE,
     READY,
     ComponentKind,
+    PlanningAgenda,
     awaited_within,
     build_agenda,
 )
-from tourganize.domain.errors import ContractViolationError, InvariantViolationError
+from tourganize.domain.errors import InvariantViolationError
 from tourganize.domain.trip import ComponentStatus, TripPlan
-from tourganize.platform.errors import TourganizeError
+from tourganize.platform.errors import ContractViolationError, TourganizeError
 from tourganize.ports.catalog import PriorityPolicy
 
 S = ComponentStatus
@@ -75,6 +78,62 @@ def keys(
 ) -> tuple[str, ...]:
     """The Agenda's Component Kinds in order — the shorthand most of these tests read by."""
     return tuple(entry.kind_key for entry in build_agenda(plan, kinds, policy).entries)
+
+
+def labelled_before_its_blocker(agenda: PlanningAgenda) -> list[str]:
+    """Every entry that names a blocker it ranks *ahead* of. Empty is the invariant."""
+    position = {entry.kind_key: index for index, entry in enumerate(agenda.entries)}
+    return [
+        f"{entry.kind_key} at rank {entry.rank} awaits {blocker}, which is ranked after it"
+        for entry in agenda.entries
+        for blocker in entry.blocked_by
+        if position[blocker] > position[entry.kind_key]
+    ]
+
+
+class AgainstTheDependencies:
+    """A policy built to break the rule: it answers in the reverse of what it was handed.
+
+    Handed a band whose Kinds are declared dependencies-first, it therefore proposes every
+    dependent *before* the Kind it awaits. Nothing about the port forbids that — a policy is
+    free to order a band however it likes — which is exactly why ``build_agenda`` has to be
+    the thing that settles the dependencies.
+    """
+
+    @property
+    def policy_id(self) -> str:
+        return "against_the_dependencies"
+
+    def order(self, candidates: Sequence[ComponentKind], plan: TripPlan) -> tuple[str, ...]:
+        del plan
+        return tuple(kind.kind_key for kind in reversed(candidates))
+
+
+@contextmanager
+def collected_warnings() -> Iterator[list[logging.LogRecord]]:
+    """Read what ``build_agenda`` logged, and put the logger back as it was.
+
+    The domain takes no constructor arguments and has nothing to inject, so it logs through
+    its own module logger, obtained by name — hence ``build_agenda.__module__`` rather than a
+    string this test would have to keep in step. Reading that logger is the honest way to
+    assert on the one message it emits.
+    """
+    logger = logging.getLogger(build_agenda.__module__)
+    records: list[logging.LogRecord] = []
+
+    class Collector(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    collector = Collector()
+    previous_level = logger.level
+    logger.addHandler(collector)
+    logger.setLevel(logging.WARNING)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(collector)
+        logger.setLevel(previous_level)
 
 
 # -- the hard rule ---------------------------------------------------------------------
@@ -172,6 +231,61 @@ def test_a_dependency_ranks_ahead_of_a_heavier_kind_that_awaits_it() -> None:
     kinds = (kind("alpha", weight=100), kind("beta", weight=900, awaits=("alpha",)))
 
     assert keys(a_plan("alpha", "beta"), kinds) == ("alpha", "beta")
+
+
+def test_a_policy_that_ignores_dependencies_cannot_rank_a_dependent_first() -> None:
+    """The bug D16 closed, in the shape it was reachable in: ``TOURGANIZE_PRIORITY_POLICY=fixed``
+    reads no ``requires_outcome_of`` at all, and here the catalog declares the dependent first.
+    Before D16 the Agenda answered ``beta`` at rank 0, labelled ``awaits_outcome`` for a Kind it
+    had put *after* it."""
+    kinds = (kind("beta", weight=200, awaits=("alpha",)), kind("alpha", weight=300))
+
+    agenda = build_agenda(a_plan("beta", "alpha"), kinds, FixedOrderPolicy())
+
+    assert agenda.explain() == (
+        ("alpha", "MENTIONED", 0, READY),
+        ("beta", "MENTIONED", 1, AWAITS_OUTCOME),
+    )
+    assert agenda.entries[1].blocked_by == ("alpha",)
+    assert labelled_before_its_blocker(agenda) == []
+
+
+def test_no_policy_can_make_the_order_and_the_labels_disagree() -> None:
+    """The structural claim, against a policy written to violate it: ``build_agenda`` computes
+    the position and the ``blocked_by`` label from one answer, so they cannot disagree."""
+    kinds = (kind("alpha"), kind("beta", awaits=("alpha",)), kind("gamma", awaits=("beta",)))
+
+    agenda = build_agenda(a_plan("alpha", "beta", "gamma"), kinds, AgainstTheDependencies())
+
+    assert tuple(entry.kind_key for entry in agenda.entries) == ("alpha", "beta", "gamma")
+    assert labelled_before_its_blocker(agenda) == []
+
+
+def test_only_the_kinds_a_dependency_constrains_are_moved() -> None:
+    """The adjustment is the minimum that makes the labels true: everywhere the declarations do
+    not contradict the policy, the policy's order survives verbatim."""
+    kinds = (kind("alpha"), kind("beta"), kind("gamma", awaits=("delta",)), kind("delta"))
+
+    ordered = keys(a_plan(), kinds, FixedOrderPolicy(("alpha", "gamma", "beta", "delta")))
+
+    assert ordered == ("alpha", "beta", "delta", "gamma")
+
+
+def test_a_dependency_cycle_is_broken_by_declaration_order_and_reported_once() -> None:
+    """Unreachable through a loaded catalog — ``catalog_problems`` refuses a cycle and every
+    adapter raises first — but an Agenda that looped for ever would be a worse failure than one
+    that orders a cycle arbitrarily and says so. The fixed policy is used because the weighted
+    one reports its own cycle too, and this is about what ``build_agenda`` does."""
+    kinds = (kind("beta", awaits=("alpha",)), kind("alpha", awaits=("beta",)))
+
+    with collected_warnings() as records:
+        first = keys(a_plan(), kinds, FixedOrderPolicy())
+        again = keys(a_plan(), kinds, FixedOrderPolicy())
+
+    assert first == ("beta", "alpha") == again  # declaration order, deterministically
+    assert [record.levelno for record in records] == [logging.WARNING] * 2  # one per build
+    assert "cycle" in records[0].getMessage()
+    assert "UNMENTIONED" in records[0].getMessage()
 
 
 def test_awaited_within_is_the_one_place_the_soft_rule_lives() -> None:
