@@ -37,10 +37,12 @@ fields:
     obligation: optional
     prompt_message_key: ask.ground_transport.vehicle_class
     enum_values: [compact, standard, estate, van, premium]
+    constraints: {filters: vehicle_class, comparison: equals}
   - name: budget_ceiling
     field_kind: money
     obligation: optional
     prompt_message_key: ask.ground_transport.budget_ceiling
+    constraints: {filters: price, comparison: at_most}
 blocking_rules:
   - name: where
     any_of: [[pickup_place]]

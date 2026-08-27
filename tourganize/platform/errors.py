@@ -22,6 +22,7 @@ __all__ = [
     "CatalogError",
     "ConfigurationError",
     "ContractViolationError",
+    "OptionSourcingError",
     "PortUnavailableError",
     "SchemaError",
     "TourganizeError",
@@ -58,4 +59,17 @@ class SchemaError(CatalogError):
     broken an installation as a kind with a dangling Outcome Dependency, and both are exit 3.
     Values that fail a schema are a different thing entirely — those are the traveller's, and
     they raise ``RequirementValueError`` from the domain instead.
+    """
+
+
+class OptionSourcingError(PortUnavailableError):
+    """Every Option Source registered for one Component Kind failed.
+
+    A :class:`PortUnavailableError` because that is exactly what it is: the ``OptionSource``
+    port had adapters, and none of them could be reached. *One* source failing is not this —
+    it is a diagnostic on the result and a source the Planning Service skips — because a slate
+    from the survivor is worth more than a refusal.
+
+    The Dialogue Director turns it into a ``report_sourcing_failure`` Act and moves to the next
+    Agenda entry. A conversation must not end because a provider did.
     """

@@ -96,7 +96,17 @@ def test_a_plan_option_carries_no_prose_field() -> None:
     declared = {field.name for field in fields(PlanOption)}
 
     assert declared & PROSE_FIELD_NAMES == set()
-    assert declared == {"option_id", "kind_key", "facts", "price", "provenance"}
+    assert declared == {
+        "option_id",
+        "kind_key",
+        "facts",
+        "price",
+        "provenance",
+        # F06's typed sibling of `facts`: the optional filters this option fails, as field
+        # names. Not prose, and deliberately not buried inside `facts` — those are what the
+        # source declared, this is what Tourganize concluded.
+        "filter_notes",
+    }
 
 
 def test_a_plan_option_needs_provenance_because_an_untraceable_option_cannot_be_shown(
@@ -157,3 +167,49 @@ def test_provenance_keeps_citations_for_f19_to_hang_grounding_off() -> None:
     provenance = Provenance("corpus:visa-rules", moment, "page-4", ("doc-1#p12", "doc-1#p13"))
 
     assert provenance.citations == ("doc-1#p12", "doc-1#p13")
+
+
+def test_filter_notes_are_empty_until_something_concludes_otherwise(
+    option_factory: OptionFactory,
+) -> None:
+    """A source never sets them: an option arrives unjudged and is annotated afterwards."""
+    option = option_factory("a1", price=Money(74000, "EUR"))
+
+    assert option.filter_notes == ()
+    assert option.satisfies_every_filter
+
+
+def test_filter_notes_are_added_by_copy_so_the_source_s_option_is_untouched(
+    option_factory: OptionFactory,
+) -> None:
+    original = option_factory("a1", price=Money(74000, "EUR"))
+
+    noted = original.with_filter_notes(["budget_ceiling"])
+
+    assert noted.filter_notes == ("budget_ceiling",)
+    assert not noted.satisfies_every_filter
+    assert original.filter_notes == ()
+    assert noted.option_id == original.option_id
+    assert dict(noted.facts) == dict(original.facts)
+
+
+def test_a_filter_note_must_be_a_field_name_rather_than_a_sentence(
+    option_factory: OptionFactory,
+) -> None:
+    """Blank notes are refused; the *shape* rule is that a note names a field, not a reason."""
+    with pytest.raises(InvariantViolationError):
+        option_factory("a1").with_filter_notes(["  "])
+
+    with pytest.raises(InvariantViolationError):
+        option_factory("a1").with_filter_notes("budget_ceiling")  # type: ignore[arg-type]
+
+
+def test_a_slate_carries_the_diagnostics_of_the_round_that_produced_it() -> None:
+    """A slate from a survivor is a different answer from a slate from everyone, and says so."""
+    slate = OptionSlate(kind_key="alpha", round_index=0, diagnostics=("source_failed:beta",))
+
+    assert slate.diagnostics == ("source_failed:beta",)
+    assert OptionSlate(kind_key="alpha", round_index=0).diagnostics == ()
+
+    with pytest.raises(InvariantViolationError):
+        OptionSlate(kind_key="alpha", round_index=0, diagnostics="source_failed")  # type: ignore[arg-type]

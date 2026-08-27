@@ -1,0 +1,28 @@
+{
+  "kind_key": "ground_transport",
+  "matchable": ["pickup_place", "date_range"],
+  "match": {
+    "pickup_place": ["Tel Aviv", "תל אביב", "TLV"],
+    "date_range": ["2026-01-01/2027-12-31"]
+  },
+  "options": [
+    {
+      "external_ref": "tlv-ground-001",
+      "facts": {"supplier": "Ayalon Cars", "vehicle_class": "standard",
+                "transmission": "automatic", "unlimited_mileage": true, "review_score": 8.1},
+      "price": {"amount_minor": 41000, "currency": "ILS"}
+    },
+    {
+      "external_ref": "tlv-ground-002",
+      "facts": {"supplier": "Carmel Drive", "vehicle_class": "compact",
+                "transmission": "automatic", "unlimited_mileage": false, "review_score": 7.2},
+      "price": {"amount_minor": 27500, "currency": "ILS"}
+    },
+    {
+      "external_ref": "tlv-ground-003",
+      "facts": {"supplier": "Negev Premium", "vehicle_class": "premium",
+                "transmission": "automatic", "unlimited_mileage": true, "review_score": 9.0},
+      "price": {"amount_minor": 88000, "currency": "ILS"}
+    }
+  ]
+}

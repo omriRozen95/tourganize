@@ -1,0 +1,58 @@
+{
+  "kind_key": "lodging",
+  "matchable": ["place", "date_range"],
+  "match": {
+    "place": ["Paris", "פריז", "paris, france"],
+    "date_range": ["2026-01-01/2027-12-31"]
+  },
+  "options": [
+    {
+      "external_ref": "px-lodging-001",
+      "facts": {"name": "Hôtel Saint-Germain", "area": "6e", "review_score": 8.7,
+                "room_type": "double", "refundable": true, "breakfast": true},
+      "price": {"amount_minor": 74000, "currency": "EUR"}
+    },
+    {
+      "external_ref": "px-lodging-002",
+      "facts": {"name": "Maison Bastille", "area": "11e", "review_score": 9.1,
+                "room_type": "double", "refundable": true, "breakfast": false},
+      "price": {"amount_minor": 96500, "currency": "EUR"}
+    },
+    {
+      "external_ref": "px-lodging-003",
+      "facts": {"name": "Résidence Montmartre", "area": "18e", "review_score": 7.4,
+                "room_type": "studio", "refundable": false, "breakfast": false},
+      "price": {"amount_minor": 51000, "currency": "EUR"}
+    },
+    {
+      "external_ref": "px-lodging-004",
+      "facts": {"name": "Le Marais Suites", "area": "3e", "review_score": 9.4,
+                "room_type": "suite", "refundable": true, "breakfast": true},
+      "price": {"amount_minor": 148000, "currency": "EUR"}
+    },
+    {
+      "external_ref": "px-lodging-005",
+      "facts": {"name": "Auberge Latine", "area": "5e", "review_score": 6.9,
+                "room_type": "twin", "refundable": false, "breakfast": true},
+      "price": {"amount_minor": 39000, "currency": "EUR"}
+    },
+    {
+      "external_ref": "px-lodging-006",
+      "facts": {"name": "Canal Loft", "area": "10e", "review_score": 8.2,
+                "room_type": "apartment", "refundable": true, "breakfast": false},
+      "price": {"amount_minor": 88000, "currency": "EUR"}
+    },
+    {
+      "external_ref": "px-lodging-007",
+      "facts": {"name": "Opéra Classic", "area": "9e", "review_score": 8.9,
+                "room_type": "double", "refundable": false, "breakfast": true},
+      "price": {"amount_minor": 112000, "currency": "EUR"}
+    },
+    {
+      "external_ref": "px-lodging-008",
+      "facts": {"name": "Batignolles Green", "area": "17e", "review_score": 7.8,
+                "room_type": "double", "refundable": true, "breakfast": false},
+      "price": {"amount_minor": 64500, "currency": "EUR"}
+    }
+  ]
+}

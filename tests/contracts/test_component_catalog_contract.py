@@ -65,15 +65,28 @@ SCHEMAS = (
                 "ask.alpha.party_size",
                 constraints={"min": 1, "max": 12},
             ),
+            # The two optional fields that declare how they filter a Plan Option (F06). They
+            # are spelled out here as well as in `conftest.SAMPLE_SCHEMAS` because this suite's
+            # whole point is that the two adapters answer identically — a constraint present in
+            # the file and absent here is exactly the drift it exists to catch.
             FieldSpec(
-                "budget_ceiling", FieldKind.MONEY, Obligation.OPTIONAL, "ask.alpha.budget_ceiling"
+                "budget_ceiling",
+                FieldKind.MONEY,
+                Obligation.OPTIONAL,
+                "ask.alpha.budget_ceiling",
+                constraints={"filters": "price", "comparison": "at_most"},
             ),
             FieldSpec(
                 "min_rating",
                 FieldKind.SCORE,
                 Obligation.OPTIONAL,
                 "ask.alpha.min_rating",
-                constraints={"min": 0, "max": 10},
+                constraints={
+                    "min": 0,
+                    "max": 10,
+                    "filters": "review_score",
+                    "comparison": "at_least",
+                },
             ),
         ),
         blocking_rules=(

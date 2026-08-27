@@ -560,3 +560,46 @@ would go with it is the DoD line above, so reversing this means asking the clien
 tests that would fail first are `test_declined_reopens_only_by_eliciting` in
 `tests/unit/test_plan_component.py` and
 `test_a_declined_kind_the_traveller_raises_again_is_planned` in `tests/unit/test_dialogue_director.py`.
+
+---
+
+## D19 — Optional filters are declared in the Requirement Schema, and are soft by default
+
+**Status:** accepted · **Owning feature:** [F06](../features/F06-option-sourcing-and-fixture-providers.md) · **Reversed by:** no planned feature
+
+**Decision.** An optional Field Spec says **how it filters a Plan Option** in its own
+`constraints` bag: `filters` names the option fact to read — with `price` reserved for the
+option's own price — and `comparison` is one of `at_most`, `at_least`, `equals`, defaulting to
+`at_most`. Nothing else in the schema format changes, and no new domain type is introduced:
+F03 already documented `constraints` as an open bag whose unknown keys are "what a *newer* Field
+Kind looks like from here". Applying them is `domain/options/filters.py`, and the result is a
+**Filter Note** — the *field name* — on the option, not a removal. `TOURGANIZE_OPTION_FILTER_STRICT=true`
+turns demotion into exclusion for an installation that wants it.
+
+**Rationale.** The alternative was a rule in Python: "a money-valued optional field is a price
+ceiling, a score is a floor". That works for the three shipped Component Kinds and quietly
+breaks the central promise the moment a fourth declares a field the rule never anticipated —
+which is the exact failure mode F02 exists to prevent, arriving through a side door. Declaring
+the comparison keeps the rule where the Kind is declared, so adding `dining` stays a YAML entry
+and a fixture directory, filters included.
+
+Soft rather than exclusive because an empty slate answers nothing. A traveller who says "under
+€150" and is shown zero options has been told less than one who is shown a €160 room marked as
+over their ceiling; the second is a conversation, the first is a dead end. This is the same
+shape F16's Feasibility findings take — advisory, and visible.
+
+**Cost.** Two more keys a schema author has to know about, and a filter that names a fact no
+provider publishes is inert rather than an error — deliberately, because a live provider that
+stops returning `review_score` should degrade rather than empty every slate, but it does mean a
+typo in `filters` fails silently. `catalog validate` does not catch it; the option's Filter
+Notes being permanently empty is what surfaces it. Soft filtering also risks reading as *not
+listening*, which is why the notes reach the Act payload and why F07's Definition of done
+requires the surface to show them.
+
+**Reversal path.** Delete the two constraint keys from the shipped schemas and
+`domain/options/filters.py` with them; the Planning Service's `_filtered` step becomes a no-op
+and every option arrives unmarked. Nothing persisted changes shape — `filter_notes` defaults to
+empty — so a stored session (F12) written under this decision loads unchanged without it. The
+tests that would fail first are `tests/unit/test_option_filters.py` and
+`test_an_option_failing_an_optional_filter_is_demoted_and_marked` in
+`tests/unit/test_planning_service.py`.

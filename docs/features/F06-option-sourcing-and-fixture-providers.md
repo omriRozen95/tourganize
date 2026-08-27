@@ -141,6 +141,67 @@ source.
 `UnknownComponentKindError` if no source is registered for a kind (a configuration bug, surfaced by
 `doctor`); individual source failures degrade to diagnostics.
 
+Nine places where the shipped code says something different from this file. They are labelled the
+way F05's are: **forced** means a rule that outranks this file left no choice, **spec-authorised**
+means this file's own Open questions or Scope allow it, and **implementer's choice** means a
+judgement that could have gone the other way and is defended here on its merits.
+
+- *(forced)* `OptionQuery` and `OptionSourceResult` are **defined** in
+  `tourganize/domain/options/query.py` and re-exported by `tourganize/ports/options.py`, which is
+  the documented import path — the third instance of the rule [D15](../architecture/decisions.md)
+  and [D17](../architecture/decisions.md) already record: a port's contract has to name the types
+  it carries, and these carry a `RequirementSet`, a `Selection` and a `PlanOption`. They are also
+  deliberately **not** re-exported from `tourganize.domain.options`: a query names a `Selection`,
+  `domain/trip` already imports `domain/options` for the Option Slate a Trip Plan records, and a
+  package-level re-export would make the two import each other at import time. The same applies to
+  `domain/options/filters.py`. Both modules say so in their own docstrings.
+- *(forced)* **The Option Query's locale is the application default, not the session's.** Scope
+  item 4 asks for "locale from the session", and the `OptionSlatePlanner` contract — F05's, which
+  the Definition of done requires to pass *unchanged* — carries no locale in `plan(...)`. Widening
+  it would have broken the very suite this feature is measured against. `PlanningService` takes a
+  `locale` constructor argument defaulting to `DEFAULT_LOCALE`, so a surface can build a
+  per-session planner the moment the port grows one; F07 is where a session locale first has
+  somewhere to come from.
+- *(spec-authorised)* **`filter_notes` is a typed sibling of `facts`, not `facts["_filter_notes"]`.**
+  The Open questions recommend exactly this "if it can be added without disturbing F02's
+  `PlanOption`", and it could: a defaulted tuple field, `with_filter_notes()` returning a copy, and
+  F02's own "no prose" test extended to name it. `facts` is what a source declared and the notes are
+  what Tourganize concluded; burying one inside the other makes both harder to trust. The notes are
+  carried into the `present_slate` Act payload, which is what F07's DoD item hangs off.
+- *(implementer's choice)* **Optional filters are *declared* in the Requirement Schema rather than
+  inferred from a field's type.** Scope item 4 says "as declared in the Requirement Schema" without
+  saying how; the how is two keys in the Field Spec's `constraints` bag — `filters` and `comparison`
+  — recorded as [D19](../architecture/decisions.md). Inferring "a money field is a ceiling, a score
+  is a floor" would work for the three shipped Kinds and break the zero-Python promise for the
+  fourth, which is the failure mode F02 exists to prevent arriving through a side door.
+- *(implementer's choice)* **The ranking puts filter satisfaction first, then price.** This file's
+  sketch says "price ascending, then declared filter satisfaction". Taken literally, demotion means
+  nothing: a cheap option that fails the review-score filter would still lead the slate, and "the
+  €160 room is shown *below* the ones under €150, marked" is the behaviour the same paragraph asks
+  for. The Open questions make the tie-breaks the implementer's call. Full order: filters satisfied,
+  price ascending within a currency, source order, `option_id`.
+- *(implementer's choice)* **Two currencies are grouped by code rather than converted.** `Money`
+  refuses to order two currencies — there is no exchange rate in the domain — so the ranking sorts by
+  `(currency, amount)`. Arbitrary between groups, stable, and honest; a query is answered in one
+  currency in practice.
+- *(implementer's choice)* **A source is asked for more candidates than the slate holds** —
+  `TOURGANIZE_SLATE_SIZE × CANDIDATE_FACTOR`, a constant of 4. With a factor of one, a single source
+  would be *choosing* the slate and every replaceable piece below it would be decoration: "cheapest
+  first" would be a sort of three arbitrary rows. `slate_size` on the query is therefore the
+  candidate count the port promises to honour, and the *slate* is truncated to the setting.
+- *(implementer's choice)* **The per-source timeout is enforced after the call, not by cancelling
+  it.** Pre-emptive cancellation of a synchronous call needs a thread per source, which buys nothing
+  for a provider that reads a file and would make a frozen-clock replay depend on real elapsed time.
+  A source that talks to a network is expected to hold its own transport to the budget (F17 and F24
+  both pass it to their client); this check is the backstop that stops a source which ignores it from
+  holding a conversation open. A source that overruns is counted as failed, so *all* of them
+  overrunning is `OptionSourcingError`, exactly as all of them raising is.
+- *(implementer's choice)* **`OptionSlate` gained a `diagnostics` field.** Scope item 5 asks for "an
+  empty slate with `diagnostics`" and F02's type had nowhere to put them. Opaque codes, like an
+  Agenda Reason Code — `synthesised:fixture`, `source_failed:world`, `filtered_out` — because "here
+  are three options, and one provider was unreachable" is a different answer from "here are three
+  options", and only the slate can carry the difference to a surface.
+
 ## Out of scope
 
 Any network call, MCP, or real provider (F15, F17, F24). Feasibility assessment of combinations (F16).

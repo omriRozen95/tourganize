@@ -1,0 +1,39 @@
+{
+  "kind_key": "air_travel",
+  "matchable": ["origin", "destination", "date_range"],
+  "match": {
+    "origin": ["Paris", "פריז", "CDG"],
+    "destination": ["Tel Aviv", "תל אביב", "TLV"],
+    "date_range": ["2026-01-01/2027-12-31"]
+  },
+  "options": [
+    {
+      "external_ref": "cdg-tlv-001",
+      "facts": {"carrier": "LY", "flight_number": "LY324", "stops": 0,
+                "depart_local": "2026-10-28T12:30", "arrive_local": "2026-10-28T17:45",
+                "duration_minutes": 255, "cabin_class": "economy", "review_score": 7.6},
+      "price": {"amount_minor": 168000, "currency": "ILS"}
+    },
+    {
+      "external_ref": "cdg-tlv-002",
+      "facts": {"carrier": "AF", "flight_number": "AF1620", "stops": 0,
+                "depart_local": "2026-10-28T07:15", "arrive_local": "2026-10-28T12:25",
+                "duration_minutes": 250, "cabin_class": "economy", "review_score": 8.2},
+      "price": {"amount_minor": 149500, "currency": "ILS"}
+    },
+    {
+      "external_ref": "cdg-tlv-003",
+      "facts": {"carrier": "TK", "flight_number": "TK1828", "stops": 1,
+                "depart_local": "2026-10-28T06:00", "arrive_local": "2026-10-28T16:10",
+                "duration_minutes": 490, "cabin_class": "economy", "review_score": 6.8},
+      "price": {"amount_minor": 94000, "currency": "ILS"}
+    },
+    {
+      "external_ref": "cdg-tlv-004",
+      "facts": {"carrier": "AF", "flight_number": "AF1820", "stops": 0,
+                "depart_local": "2026-10-28T19:05", "arrive_local": "2026-10-29T00:10",
+                "duration_minutes": 245, "cabin_class": "business", "review_score": 9.3},
+      "price": {"amount_minor": 402000, "currency": "ILS"}
+    }
+  ]
+}

@@ -171,6 +171,12 @@ forbidden_modules = [
   "weasyprint",
 ]
 
+# One adapter never reaches into another: an adapter that did could not be swapped out on its
+# own, which is the whole point of the layout. F06's Definition of done names this rule for
+# `tourganize.adapters.options` in particular — the Fixture Provider, the registry and the
+# ranking must not import `tourganize.adapters.presentation` or any other adapter package —
+# and it is enforced here for every pair, not only that one.
+# tests/architecture/test_import_boundaries.py checks the same rule by AST, both directions.
 [[tool.importlinter.contracts]]
 name = "Adapter sub-packages are independent of each other"
 type = "independence"

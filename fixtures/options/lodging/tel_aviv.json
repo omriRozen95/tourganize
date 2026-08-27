@@ -1,0 +1,46 @@
+{
+  "kind_key": "lodging",
+  "matchable": ["place", "date_range"],
+  "match": {
+    "place": ["Tel Aviv", "תל אביב", "tel aviv-yafo"],
+    "date_range": ["2026-01-01/2027-12-31"]
+  },
+  "options": [
+    {
+      "external_ref": "tlv-lodging-001",
+      "facts": {"name": "Rothschild Corner", "area": "Lev Ha'ir", "review_score": 8.8,
+                "room_type": "double", "refundable": true, "breakfast": true},
+      "price": {"amount_minor": 92000, "currency": "ILS"}
+    },
+    {
+      "external_ref": "tlv-lodging-002",
+      "facts": {"name": "Neve Tzedek Guesthouse", "area": "Neve Tzedek", "review_score": 9.2,
+                "room_type": "suite", "refundable": true, "breakfast": true},
+      "price": {"amount_minor": 141000, "currency": "ILS"}
+    },
+    {
+      "external_ref": "tlv-lodging-003",
+      "facts": {"name": "Florentin Hostel", "area": "Florentin", "review_score": 7.1,
+                "room_type": "twin", "refundable": false, "breakfast": false},
+      "price": {"amount_minor": 44000, "currency": "ILS"}
+    },
+    {
+      "external_ref": "tlv-lodging-004",
+      "facts": {"name": "Yarkon Seaview", "area": "Hayarkon", "review_score": 8.4,
+                "room_type": "double", "refundable": false, "breakfast": true},
+      "price": {"amount_minor": 118000, "currency": "ILS"}
+    },
+    {
+      "external_ref": "tlv-lodging-005",
+      "facts": {"name": "Sarona Apartments", "area": "Sarona", "review_score": 8.0,
+                "room_type": "apartment", "refundable": true, "breakfast": false},
+      "price": {"amount_minor": 76000, "currency": "ILS"}
+    },
+    {
+      "external_ref": "tlv-lodging-006",
+      "facts": {"name": "Jaffa Port Rooms", "area": "Jaffa", "review_score": 6.6,
+                "room_type": "double", "refundable": false, "breakfast": false},
+      "price": {"amount_minor": 38000, "currency": "ILS"}
+    }
+  ]
+}

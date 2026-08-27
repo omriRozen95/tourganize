@@ -1,7 +1,7 @@
 """The ``OptionSlatePlanner`` contract, run against every adapter of the port.
 
-F06's real planning service is the next adapter, and it is done when this file passes
-**unmodified**. Nothing here asserts anything about *which* options come back — that is the
+F06's real planning service is the second adapter, and it was done when this file passed
+**unmodified** — only :data:`PLANNERS` grew, which is what that dict is for. Nothing here asserts anything about *which* options come back — that is the
 whole of what a planner is free to decide — only the shape of the answer, which the Dialogue
 Director and the Trip Plan both depend on: the slate is for the Component Kind that was asked
 about, in the round that was asked for, with options of that Kind, distinct ids, and Provenance
@@ -15,11 +15,18 @@ adapter that gets either wrong is one whose slates cannot be recorded at all.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
+from tourganize.adapters.catalog.memory import InMemoryComponentCatalog
 from tourganize.adapters.clock.fake import DEFAULT_MOMENT, FrozenClock
+from tourganize.adapters.options import CheapestFirstRanking, SourceRegistry
 from tourganize.adapters.options.fake import FixedSlatePlanner
+from tourganize.adapters.options.fixture import FixtureOptionSource
+from tourganize.adapters.telemetry.null import NullTelemetrySink
+from tourganize.application.planning_service import PlanningService
+from tourganize.domain.catalog import ComponentKind
 from tourganize.domain.options import OptionSlate
 from tourganize.domain.requirements import (
     BlockingRule,
@@ -31,16 +38,53 @@ from tourganize.domain.requirements import (
     RequirementUpdate,
 )
 from tourganize.domain.trip import ComponentStatus, TripPlan
+from tourganize.platform.settings import OptionSourceProfile
 from tourganize.ports.interpretation import OptionSlatePlanner
 
 PlannerBuilder = Callable[[], OptionSlatePlanner]
 
-#: Every adapter of the port, keyed by the name the test ids use. F06 appends its own.
+#: Where F06's real planner reads its recorded options from: the tree that ships with the
+#: repository. Pointed at rather than copied, for the reason the CLI subprocess suite points at
+#: the shipped catalog — only the shipped files can prove the shipped files work.
+SHIPPED_FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "options"
+
+
+def _planning_service(slate_size: int = 3) -> OptionSlatePlanner:
+    """F06's real planner, wired the way the Composition Root wires it.
+
+    Its Component Catalog declares ``alpha`` alone: this suite also asks about ``omega``, and a
+    planner that could only answer for the Kinds its catalog names would be a planner with a
+    fixed set of topics in it — which is the one thing the last test in this file forbids.
+    """
+    clock = FrozenClock(DEFAULT_MOMENT)
+    kinds = (
+        ComponentKind(
+            kind_key="alpha",
+            message_key="component.alpha",
+            priority_weight=100,
+            schema_key="alpha.v1",
+        ),
+    )
+    return PlanningService(
+        InMemoryComponentCatalog(kinds, (SCHEMA,)),
+        SourceRegistry(
+            OptionSourceProfile(), {"fixture": (FixtureOptionSource(SHIPPED_FIXTURES, clock),)}
+        ),
+        CheapestFirstRanking(),
+        clock,
+        NullTelemetrySink(),
+        slate_size=slate_size,
+    )
+
+
+#: Every adapter of the port, keyed by the name the test ids use. F06 appended its own.
 PLANNERS: dict[str, PlannerBuilder] = {
     "FixedSlatePlanner": lambda: FixedSlatePlanner(FrozenClock(DEFAULT_MOMENT)),
     "FixedSlatePlanner(one option)": lambda: FixedSlatePlanner(
         FrozenClock(DEFAULT_MOMENT), slate_size=1
     ),
+    "PlanningService": _planning_service,
+    "PlanningService(one option)": lambda: _planning_service(slate_size=1),
 }
 
 SCHEMA = RequirementSchema(

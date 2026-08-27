@@ -1,9 +1,9 @@
 """The ``tourganize`` command line.
 
-Three commands work today: ``--version``, ``doctor`` and ``catalog`` (``show``, ``validate``,
-``gaps`` and ``agenda``). The rest of the surface is registered as stubs that name the feature
-which will implement them, so the shape of the finished application is discoverable from the
-first release and no later feature has to invent its own entry point.
+Four commands work today: ``--version``, ``doctor``, ``catalog`` (``show``, ``validate``,
+``gaps`` and ``agenda``) and ``options`` (``search``). The rest of the surface is registered as
+stubs that name the feature which will implement them, so the shape of the finished application
+is discoverable from the first release and no later feature has to invent its own entry point.
 
 Exit codes are part of the contract:
 
@@ -37,6 +37,7 @@ from tourganize.domain.errors import (
     UnknownComponentKindError,
     UnknownFieldError,
 )
+from tourganize.domain.options import Money, OptionSlate, PlanOption
 from tourganize.domain.requirements import (
     GapReport,
     RequirementSchema,
@@ -45,7 +46,7 @@ from tourganize.domain.requirements import (
     analyse,
 )
 from tourganize.domain.trip import TripPlan
-from tourganize.platform.errors import ConfigurationError
+from tourganize.platform.errors import ConfigurationError, PortUnavailableError
 from tourganize.platform.logging import configure_logging
 from tourganize.platform.settings import Settings, unrecognised_keys
 from tourganize.ports.catalog import ComponentCatalog
@@ -66,6 +67,10 @@ EXIT_CONFIGURATION_ERROR: Final = 3
 #: awaiting a feature, so ``catalog`` has no stub actions left; the convention lives on in
 #: :data:`PLANNED_COMMANDS`, and a later feature that plans a new ``catalog`` action follows it.
 CATALOG_ACTIONS: Final = ("show", "validate", "gaps", "agenda")
+
+#: The ``options`` actions this release implements. One, for now: the client's model is a short
+#: slate and a refinement, so there is no ``more`` and no pagination to add later.
+OPTIONS_ACTIONS: Final = ("search",)
 
 #: Top-level sub-commands that later features implement:
 #: name -> (feature, what that feature delivers). Each entry is deleted from this table by the
@@ -104,9 +109,10 @@ def _mention_each(plan: TripPlan, kind_keys: Sequence[str]) -> None:
 def _select_each(plan: TripPlan, kind_keys: Sequence[str]) -> None:
     """Describe each Kind as already chosen.
 
-    The CLI has no Option Source (F06) and therefore no Plan Option a Selection could name, so
-    the aggregate's own ``mark_selected`` is what produces the state — nothing out here walks a
-    Component Status edge.
+    ``catalog agenda`` describes a plan rather than building one, so there is no slate here for
+    a Selection to name — the aggregate's own ``mark_selected`` is what produces the state, and
+    nothing out here walks a Component Status edge. Sourcing an actual slate is
+    ``options search``, which is a different command about a different question.
     """
     for kind_key in kind_keys:
         plan.mark_selected(kind_key)
@@ -143,6 +149,7 @@ def build_parser() -> argparse.ArgumentParser:
         "doctor", help="print resolved settings, selected adapters and per-port health"
     )
     _add_catalog_parser(subcommands)
+    _add_options_parser(subcommands)
 
     for name, (feature, summary) in PLANNED_COMMANDS.items():
         stub = subcommands.add_parser(name, help=f"[{feature}] {summary}")
@@ -171,6 +178,21 @@ def _add_catalog_parser(subcommands: argparse._SubParsersAction[argparse.Argumen
     agenda = actions.add_parser("agenda", help="the Planning Agenda: what to plan next, and why")
     for name, argument in _AGENDA_ARGUMENTS.items():
         agenda.add_argument(f"--{name}", default="", metavar="K1,K2", help=argument.help_text)
+
+
+def _add_options_parser(subcommands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    """``options search`` — the first command that shows real option data."""
+    options = subcommands.add_parser("options", help="source Plan Options for a Component Kind")
+    actions = options.add_subparsers(dest="options_command", metavar="action")
+    search = actions.add_parser("search", help="the Option Slate one Component Kind would be shown")
+    search.add_argument("--kind", required=True, metavar="KIND_KEY", help="the Component Kind")
+    search.add_argument(
+        "--set",
+        dest="values",
+        default=None,
+        metavar="JSON",
+        help='requirement values already known, as a JSON object: \'{"place": "Paris"}\'',
+    )
 
 
 def main(
@@ -232,6 +254,15 @@ def main(
             )
         if command == "catalog":
             return _catalog(build_container(settings), args.catalog_command, out=out, err=err)
+        if command == "options":
+            return _options(
+                build_container(settings),
+                args.options_command,
+                kind_key=getattr(args, "kind", None),
+                values=getattr(args, "values", None),
+                out=out,
+                err=err,
+            )
     except ConfigurationError as exc:
         print(f"configuration error: {exc}", file=err)
         return EXIT_CONFIGURATION_ERROR
@@ -276,6 +307,100 @@ def _catalog(container: Container, action: str | None, *, out: TextIO, err: Text
         return EXIT_OK
     print(_render_kinds(kinds, origin=str(origin)), file=out)
     return EXIT_OK
+
+
+def _options(
+    container: Container,
+    action: str | None,
+    *,
+    kind_key: str | None,
+    values: str | None,
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """``options search`` — source one Component Kind's first round and print the slate.
+
+    Round zero, always: this command exists to show what a traveller would be shown when they
+    first ask, and a refinement is a *conversation*, not a flag. What changes the slate is the
+    ``--set`` values, which is exactly what changes it in a conversation too.
+    """
+    if action not in OPTIONS_ACTIONS:
+        print(f"tourganize options needs an action: {', '.join(OPTIONS_ACTIONS)}", file=err)
+        return EXIT_NOT_IMPLEMENTED
+    if kind_key is None:  # pragma: no cover - argparse requires --kind on every action
+        print("tourganize options search: --kind is required", file=err)
+        return EXIT_USAGE_ERROR
+    try:
+        schema = container.component_catalog.schema_for(kind_key)
+    except UnknownComponentKindError as exc:
+        print(f"tourganize options search: {exc}", file=err)
+        return EXIT_USAGE_ERROR
+    try:
+        requirements = _requirements_from(schema, values)
+    except (UnknownFieldError, ValueError) as exc:
+        print(f"tourganize options search: --set {exc}", file=err)
+        return EXIT_USAGE_ERROR
+    plan = TripPlan(plan_id="cli", created_at=container.clock.now())
+    try:
+        slate = container.option_slate_planner.plan(kind_key, requirements, plan, 0)
+    except PortUnavailableError as exc:
+        # Every source failed. In a conversation this is a `report_sourcing_failure` Act and the
+        # next Agenda entry; on the command line there is no next entry, so it is exit 3 — a
+        # broken installation, told apart from an empty slate, which is exit 0 and says so.
+        print(f"tourganize options search: {exc}", file=err)
+        return EXIT_CONFIGURATION_ERROR
+    print(_render_slate(slate, schema), file=out)
+    return EXIT_OK
+
+
+def _render_slate(slate: OptionSlate, schema: RequirementSchema) -> str:
+    """Render one Option Slate as a table: what it costs, what is known about it, where it came
+    from, and which of the traveller's own filters it fails."""
+    lines = [
+        f"{slate.kind_key} (schema {schema.schema_key}, round {slate.round_index})",
+        "",
+        f"requirements_digest: {slate.requirements_digest}",
+        f"diagnostics: {', '.join(slate.diagnostics) or 'none'}",
+        "",
+        f"options ({len(slate.options)}):",
+    ]
+    lines += _indented(
+        _table(
+            ("option_id", "price", "facts", "source", "fails"),
+            [
+                (
+                    option.option_id,
+                    _money(option.price),
+                    _facts(option.facts),
+                    _provenance(option),
+                    ", ".join(option.filter_notes) or "-",
+                )
+                for option in slate.options
+            ],
+        )
+    )
+    return "\n".join(line.rstrip() for line in lines)
+
+
+def _money(price: Money | None) -> str:
+    """A price as ``74000 EUR``: minor units, because the domain holds no other kind of amount.
+
+    Formatting an amount for a human — a symbol, a decimal separator, a currency's own number
+    of minor digits — is the Presentation context's, and F10 is where a locale is known.
+    """
+    return "-" if price is None else f"{price.amount_minor} {price.currency}"
+
+
+def _facts(facts: Mapping[str, object]) -> str:
+    """The declared facts as ``key=value``, in the order the source declared them."""
+    return " ".join(f"{name}={value}" for name, value in facts.items()) or "-"
+
+
+def _provenance(option: PlanOption) -> str:
+    """Where this option came from: the source, and the source's own reference for it."""
+    reference = option.provenance.external_ref
+    source_id = option.provenance.source_id
+    return source_id if reference is None else f"{source_id} ({reference})"
 
 
 def _load_every_schema(catalog: ComponentCatalog) -> tuple[RequirementSchema, ...]:

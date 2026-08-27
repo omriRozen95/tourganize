@@ -40,15 +40,17 @@ fields:
     obligation: optional
     prompt_message_key: ask.air_travel.cabin_class
     enum_values: [economy, premium_economy, business, first]
+    constraints: {filters: cabin_class, comparison: equals}
   - name: max_stops
     field_kind: integer
     obligation: optional
     prompt_message_key: ask.air_travel.max_stops
-    constraints: {min: 0, max: 3}
+    constraints: {min: 0, max: 3, filters: stops, comparison: at_most}
   - name: budget_ceiling
     field_kind: money
     obligation: optional
     prompt_message_key: ask.air_travel.budget_ceiling
+    constraints: {filters: price, comparison: at_most}
 blocking_rules:
   - name: route
     any_of: [[origin, destination]]

@@ -4,20 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is right now
 
-**A specification repository whose planning domain is complete, and now driven by a conversation.**
-F01–F05 have landed: there is an installable `tourganize` package, a test suite, a CPU-only container
-and CI; a Trip Plan made of Plan Components whose *types* are declared as data in
-`config/catalog/components.yaml`; per kind, a Requirement Schema in `config/catalog/schemas/` saying
-what has to be known before that component can be planned; a Planning Agenda that answers "what do we
-plan next" — mentioned Component Kinds first, then the rest, each band ordered by a replaceable
-Priority Policy; and a **Dialogue Director**, the explicit state machine that resolves blocking
-questions before sourcing, presents Option Slates, runs the unbounded choose-or-refine loop, offers the
-Kinds nobody mentioned and closes the session on their answer. It emits **Assistant Acts** and consumes
-**Turn Interpretations** through a port, so a deterministic keyword interpreter drives it today and F08
-replaces that by config. Working commands are `tourganize --version`, `doctor`, `catalog show`,
-`catalog validate`, `catalog gaps` and `catalog agenda`; there is no surface yet, so the dialogue is
-driven from the tests until F07 wires `chat`. The remaining 20 feature specs are still the plan,
-implemented one at a time, in order.
+**A specification repository whose planning domain is complete, driven by a conversation, and now
+sourcing real option data.** F01–F06 have landed: there is an installable `tourganize` package, a test
+suite, a CPU-only container and CI; a Trip Plan made of Plan Components whose *types* are declared as
+data in `config/catalog/components.yaml`; per kind, a Requirement Schema in `config/catalog/schemas/`
+saying what has to be known before that component can be planned; a Planning Agenda that answers "what
+do we plan next" — mentioned Component Kinds first, then the rest, each band ordered by a replaceable
+Priority Policy; a **Dialogue Director**, the explicit state machine that resolves blocking questions
+before sourcing, presents Option Slates, runs the unbounded choose-or-refine loop, offers the Kinds
+nobody mentioned and closes the session on their answer; and, behind its `OptionSlatePlanner` seam, a
+real **Planning Service** over the `OptionSource` port — Fixture Providers reading
+`fixtures/options/<kind_key>/*.json`, merged, soft-filtered, ranked and truncated to a slate. It emits
+**Assistant Acts** and consumes **Turn Interpretations** through a port, so a deterministic keyword
+interpreter drives it today and F08 replaces that by config. Working commands are `tourganize
+--version`, `doctor`, `catalog show`, `catalog validate`, `catalog gaps`, `catalog agenda` and
+`options search`; there is no surface yet, so the dialogue is driven from the tests until F07 wires
+`chat`. The remaining 19 feature specs are still the plan, implemented one at a time, in order.
 
 Four kinds of file, with different rules:
 
@@ -26,9 +28,9 @@ Four kinds of file, with different rules:
 | `project_demands.md` | The client's original words | **Never edit.** Source of truth for *intent*. |
 | `architecture_brief.md` | The normalised brief that commissioned `docs/` | Do not edit. Source of truth for the *form* of the deliverable. |
 | `docs/**` | The deliverable | Edit freely, but honour the consistency rules below. |
-| `tourganize/**`, `tests/**`, `config/**`, `docker/**` | The implementation | Governed by the feature file it belongs to plus the invariants below. |
+| `tourganize/**`, `tests/**`, `config/**`, `fixtures/**`, `docker/**` | The implementation | Governed by the feature file it belongs to plus the invariants below. |
 
-The next thing to build is `docs/features/F06-option-sourcing-and-fixture-providers.md`. Read
+The next thing to build is `docs/features/F07-presentation-surface-and-terminal-shell.md`. Read
 `docs/roadmap.md` before starting any implementation work.
 
 ## Reading order for a new session
@@ -38,7 +40,7 @@ The next thing to build is `docs/features/F06-option-sourcing-and-fixture-provid
 2. `docs/architecture/glossary.md` — the ubiquitous language. **Authoritative on naming.**
 3. `docs/architecture/overview.md` — contexts, ports, per-turn data flow, C1–C14 traceability, open
    client questions.
-4. `docs/architecture/decisions.md` — D1–D18, each with cost and reversal path.
+4. `docs/architecture/decisions.md` — D1–D19, each with cost and reversal path.
 5. The one feature file you are implementing, plus the files of its declared dependencies.
 
 A feature file is designed to be self-sufficient: implement from its Scope and Contract sections, and
@@ -95,6 +97,8 @@ tourganize doctor                         # resolved settings, adapter selection
 tourganize catalog show                   # the declared Component Kinds; `validate` exits 0 or 3
 tourganize catalog gaps --kind lodging    # the Gap Report; `--set '<json>'` supplies known values
 tourganize catalog agenda --mentioned lodging   # the Planning Agenda: bands, ranks, reason codes
+tourganize options search --kind lodging \
+  --set '{"place":"Paris","date_range":"2026-10-23/2026-10-28"}'   # a real Option Slate
 docker compose --profile dev-cpu run --rm app tourganize doctor
 ```
 
@@ -130,16 +134,18 @@ states what each owns *and* what it is forbidden to know.
 
 A **Plan Component** identified by a `kind_key`, typed by a **Component Kind** declared as data in
 `config/catalog/components.yaml`, whose requirements are declared as data in
-`config/catalog/schemas/<schema_key>.yaml`. Flights, lodging and ground transport are *configuration*,
-not classes and not `if` branches. Adding `dining` must require zero Python changes — F02, F03, F06 and
-F13 each carry a test that proves it, and F02's DoD asserts that grepping `tourganize/` for topic
-strings returns nothing.
+`config/catalog/schemas/<schema_key>.yaml`, and whose *options* are declared as data in
+`fixtures/options/<kind_key>/*.json`. Flights, lodging and ground transport are *configuration*, not
+classes and not `if` branches. Adding `dining` must require zero Python changes — F02, F03, F06 and
+F13 each carry a test that proves it (`tests/integration/test_fourth_component_kind.py` is F06's),
+and F02's DoD asserts that grepping `tourganize/` for topic strings returns nothing.
 
 ### One turn, end to end
 
 `PresentationSurface` → `UserTurn` → `TurnInterpreter` (keyword adapter, later LLM-backed) →
 `TurnInterpretation` → `DialogueDirector` (explicit state machine) → requirement merge, agenda rebuild
-→ either `ask_blocking` or `OptionSource` search → `OptionSlate` → `AssistantAct` → surface.
+→ either `ask_blocking` or `PlanningService` → `OptionQuery` → the registered `OptionSource`s, called
+serially → merge, soft filter, rank, truncate → `OptionSlate` → `AssistantAct` → surface.
 
 The Director emits **Assistant Acts** — structured, locale-neutral intents to communicate. It contains
 all control flow and no wording; the surface and Language Services turn Acts into sentences.
@@ -151,7 +157,9 @@ all control flow and no wording; the surface and Language Services turn Acts int
 `build_agenda` consumes it and the domain may import nothing) · `TurnInterpreter`,
 `OptionSlatePlanner` (F05, declared in `dialogue/ports.py` and re-exported by
 `ports/interpretation.py`, because their contracts are typed with Dialogue value objects — D17) ·
-`OptionSource` (F06) ·
+`OptionSource`, `OptionSourceRegistry`, `OptionRanking` (F06, declared in `ports/options.py`;
+`OptionQuery`/`OptionSourceResult` are defined in `domain/options/query.py` and re-exported, because
+they carry a `Selection` and `domain/trip` already imports `domain/options`) ·
 `PresentationSurface` (F07) · `LlmGateway` (F08) · `LanguageDetector` (F10) ·
 `SessionRepository` (F12) · `ItineraryRenderer` (F13) · `ToolBroker` (F15) ·
 `KnowledgeCorpus`, `TextExtractor`, `PassageSplitter` (F18) · `KnowledgeRetriever`, `EmbeddingModel` (F19).
@@ -202,7 +210,19 @@ guards it; if one starts failing, fix the code, not the test.
 - **The `LlmGateway` is serial.** No caller may assume parallel fan-out (the Claude Code adapter is one
   process per call).
 - **Fixtures and fakes stay the test default forever**, even after live providers exist, and a fixture's
-  shape may never differ from the port contract.
+  shape may never differ from the port contract — `tests/contracts/test_option_source_contract.py` is
+  what makes that enforceable, and it carries deliberately broken adapters proving it bites.
+- **Sourcing degrades, it never dies.** One source of several failing is a diagnostic and a source
+  skipped; only *every* source for a Kind failing raises `OptionSourcingError`, which the Director
+  turns into `report_sourcing_failure` without ending the session. An empty slate is not an exception
+  at all. A query nothing matches is answered with a deterministic synthetic set marked `synthesised`.
+- **Optional filters are soft and declared as data.** They demote and annotate, never discard, unless
+  `TOURGANIZE_OPTION_FILTER_STRICT=true`; *which* option fact a field filters on is two keys in that
+  field's `constraints` (D19), so a fourth Component Kind's filters are configuration too. A Filter
+  Note is a field name, never a reason.
+- **The same query yields a byte-identical slate**, in any process: sources are seeded by
+  `requirements.digest()`, the query's `request_id` is derived rather than generated, and the ranking's
+  last tie-break is the `option_id`. F11's replay rests on it.
 - **Feasibility findings are advisory** — they annotate and demote options, they do not silently filter
   them.
 - **The state machine is a table, and every move goes through one guard.** `TRANSITIONS` in

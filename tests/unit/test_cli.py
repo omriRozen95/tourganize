@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from conftest import write_catalog, write_keywords, write_schemas
+from conftest import write_catalog, write_keywords, write_option_fixtures, write_schemas
 
 from tourganize import __version__
 from tourganize.cli import (
@@ -18,6 +18,7 @@ from tourganize.cli import (
     EXIT_NOT_IMPLEMENTED,
     EXIT_OK,
     EXIT_USAGE_ERROR,
+    OPTIONS_ACTIONS,
     PLANNED_COMMANDS,
     main,
 )
@@ -30,14 +31,16 @@ def _run(argv: list[str], environ: Mapping[str, str] | None = None) -> tuple[int
 
 
 def _environ(tmp_path: Path, **extra: str) -> dict[str, str]:
-    """A healthy installation in ``tmp_path``: catalog, schemas and keyword phrase tables."""
+    """A healthy installation in ``tmp_path``: catalog, schemas, phrase tables and fixtures."""
     write_catalog(tmp_path / "config")
     write_schemas(tmp_path / "config")
     write_keywords(tmp_path / "config")
+    write_option_fixtures(tmp_path / "fixtures" / "options")
     environ = {
         "TOURGANIZE_ENV": "test",
         "TOURGANIZE_CONFIG_DIR": str(tmp_path / "config"),
         "TOURGANIZE_DATA_DIR": str(tmp_path / "var"),
+        "TOURGANIZE_FIXTURE_DIR": str(tmp_path / "fixtures" / "options"),
     }
     environ.update(extra)
     return environ
@@ -531,3 +534,161 @@ def test_an_unknown_command_is_rejected_by_the_parser() -> None:
     with pytest.raises(SystemExit) as raised:
         main(["teleport"], environ={})
     assert raised.value.code == 2
+
+
+# -- `options search` --------------------------------------------------------------------------
+
+
+def _slate_rows(out: str) -> list[list[str]]:
+    """The printed slate's rows as columns: option_id, price, facts, source, fails."""
+    lines = out.splitlines()
+    rule = next(index for index, line in enumerate(lines) if line.strip().startswith("---"))
+    return [line.split() for line in itertools.takewhile(bool, lines[rule + 1 :])]
+
+
+def test_options_search_prints_a_slate_with_prices_and_provenance(tmp_path: Path) -> None:
+    """F06's headline: the first command that shows real option data."""
+    code, out, err = _run(
+        ["options", "search", "--kind", "alpha", "--set", '{"place": "Paris"}'],
+        _environ(tmp_path),
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "alpha (schema alpha.v1, round 0)" in out
+    assert "requirements_digest: " in out
+    rows = _slate_rows(out)
+    assert len(rows) == 3
+    for row in rows:
+        assert row[0].startswith("fixture:")
+        assert row[2] == "EUR"  # the currency, beside the amount in minor units
+        assert "review_score=" in " ".join(row)
+
+
+def test_options_search_honours_the_configured_slate_size(tmp_path: Path) -> None:
+    code, out, _ = _run(
+        ["options", "search", "--kind", "alpha", "--set", '{"place": "Paris"}'],
+        _environ(tmp_path, TOURGANIZE_SLATE_SIZE="2"),
+    )
+
+    assert code == EXIT_OK
+    assert len(_slate_rows(out)) == 2
+
+
+def test_options_search_marks_an_option_that_fails_an_optional_filter(tmp_path: Path) -> None:
+    code, out, _ = _run(
+        [
+            "options",
+            "search",
+            "--kind",
+            "alpha",
+            "--set",
+            '{"place": "Paris", "budget_ceiling": "1000 EUR"}',
+        ],
+        _environ(tmp_path),
+    )
+
+    assert code == EXIT_OK
+    assert out.count("budget_ceiling") == len(_slate_rows(out))
+
+
+def test_options_search_says_when_strict_filtering_left_nothing(tmp_path: Path) -> None:
+    code, out, _ = _run(
+        [
+            "options",
+            "search",
+            "--kind",
+            "alpha",
+            "--set",
+            '{"place": "Paris", "budget_ceiling": "1000 EUR"}',
+        ],
+        _environ(tmp_path, TOURGANIZE_OPTION_FILTER_STRICT="true"),
+    )
+
+    assert code == EXIT_OK
+    assert "options (0):" in out
+    assert "diagnostics: filtered_out" in out
+
+
+def test_options_search_says_when_a_slate_had_to_be_synthesised(tmp_path: Path) -> None:
+    """A demonstration never dead-ends, and the output never pretends the data was recorded."""
+    code, out, _ = _run(
+        ["options", "search", "--kind", "alpha", "--set", '{"place": "Reykjavik"}'],
+        _environ(tmp_path),
+    )
+
+    assert code == EXIT_OK
+    assert "synthesised" in out
+    assert len(_slate_rows(out)) == 3
+
+
+def test_options_search_refuses_a_kind_the_catalog_does_not_declare(tmp_path: Path) -> None:
+    code, _, err = _run(["options", "search", "--kind", "nowhere"], _environ(tmp_path))
+
+    assert code == EXIT_USAGE_ERROR
+    assert "nowhere" in err
+
+
+def test_options_search_refuses_a_field_the_schema_does_not_declare(tmp_path: Path) -> None:
+    code, _, err = _run(
+        ["options", "search", "--kind", "alpha", "--set", '{"nowhere": 1}'], _environ(tmp_path)
+    )
+
+    assert code == EXIT_USAGE_ERROR
+    assert "nowhere" in err
+
+
+def test_options_search_refuses_a_set_that_is_not_json(tmp_path: Path) -> None:
+    code, _, err = _run(
+        ["options", "search", "--kind", "alpha", "--set", "place=Paris"], _environ(tmp_path)
+    )
+
+    assert code == EXIT_USAGE_ERROR
+    assert "not valid JSON" in err
+
+
+def test_options_needs_an_action(tmp_path: Path) -> None:
+    code, _, err = _run(["options"], _environ(tmp_path))
+
+    assert code == EXIT_NOT_IMPLEMENTED
+    assert ", ".join(OPTIONS_ACTIONS) in err
+
+
+def test_options_search_is_deterministic_to_the_byte(tmp_path: Path) -> None:
+    """The same query twice prints the same slate — what F11's replay rests on."""
+    environ = _environ(tmp_path)
+    arguments = ["options", "search", "--kind", "alpha", "--set", '{"place": "Paris"}']
+
+    first = _run(arguments, environ)
+    second = _run(arguments, environ)
+
+    assert first == second
+
+
+def test_options_search_exits_3_for_a_profile_this_release_cannot_build(tmp_path: Path) -> None:
+    """`live` resolves in Settings and is refused by the Composition Root, naming F24.
+
+    Sourcing failing *at run time* cannot be reached from here — the fixture profile always
+    answers, synthesising when it has nothing recorded — so what the command line can be shown
+    is the configuration that would have failed, refused before a slate is even attempted.
+    ``tests/unit/test_planning_service.py`` is where every-source-failing is exercised.
+    """
+    code, out, err = _run(
+        ["options", "search", "--kind", "alpha"],
+        _environ(tmp_path, TOURGANIZE_OPTION_SOURCE_PROFILE="alpha=live"),
+    )
+
+    assert code == EXIT_CONFIGURATION_ERROR
+    assert "F24" in err
+    assert out == ""
+
+
+def test_doctor_reports_the_option_sources_and_the_profile(tmp_path: Path) -> None:
+    code, out, _ = _run(
+        ["doctor"],
+        _environ(tmp_path, TOURGANIZE_OPTION_SOURCE_PROFILE="alpha=fixture,beta=fixture"),
+    )
+
+    assert code == EXIT_OK
+    assert "option_source_profile: alpha=fixture,beta=fixture (default fixture)" in out
+    assert "OptionSlatePlanner: PlanningService" in out
+    assert "[ok  ] option_sources: alpha -> fixture: fixture" in out

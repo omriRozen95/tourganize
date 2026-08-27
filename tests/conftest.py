@@ -48,8 +48,10 @@ kinds:
 #: The Requirement Schemas of the two *enabled* kinds of :data:`SAMPLE_CATALOG`, keyed by
 #: ``schema_key`` exactly as the file names are. ``alpha.v1`` is the interesting one: it carries
 #: a blocking rule with two candidate groups, which is the shape the client's own "a range, or
-#: a start and an end" rule needs. ``gamma`` is disabled and deliberately has no schema — a
-#: kind nobody can plan does not need one, and `catalog validate` must not ask for it.
+#: a start and an end" rule needs, and two optional fields that declare how they *filter* a Plan
+#: Option (F06) — ``budget_ceiling`` against an option's price, ``min_rating`` against its
+#: ``review_score`` fact. ``gamma`` is disabled and deliberately has no schema — a kind nobody
+#: can plan does not need one, and `catalog validate` must not ask for it.
 SAMPLE_SCHEMAS: Final[Mapping[str, str]] = {
     "alpha.v1": """\
 schema_key: alpha.v1
@@ -81,11 +83,12 @@ fields:
     field_kind: money
     obligation: optional
     prompt_message_key: ask.alpha.budget_ceiling
+    constraints: {filters: price, comparison: at_most}
   - name: min_rating
     field_kind: score
     obligation: optional
     prompt_message_key: ask.alpha.min_rating
-    constraints: {min: 0, max: 10}
+    constraints: {min: 0, max: 10, filters: review_score, comparison: at_least}
 blocking_rules:
   - name: where
     any_of: [[place]]
@@ -187,6 +190,77 @@ def keywords_dir(config_dir: Path) -> Path:
     return default_keyword_config_dir(config_dir)
 
 
+#: Option fixtures for :data:`SAMPLE_CATALOG`'s two enabled kinds, keyed by ``kind_key`` and
+#: then by file name. Neutral keys and neutral content, for the reason the sample catalog has
+#: them: a test about *sourcing* should not have to name a travel topic. ``alpha`` carries eight
+#: options across two places and two currencies, with review scores spread wide enough that a
+#: filter, a ranking and a refinement all visibly do something.
+SAMPLE_OPTION_FIXTURES: Final[Mapping[str, Mapping[str, str]]] = {
+    "alpha": {
+        "paris": """\
+{
+  "kind_key": "alpha",
+  "matchable": ["place", "date_range"],
+  "match": {"place": ["Paris"], "date_range": ["2026-01-01/2027-12-31"]},
+  "options": [
+    {"external_ref": "a-1", "facts": {"review_score": 8.7, "nights": 5},
+     "price": {"amount_minor": 74000, "currency": "EUR"}},
+    {"external_ref": "a-2", "facts": {"review_score": 9.1, "nights": 5},
+     "price": {"amount_minor": 96500, "currency": "EUR"}},
+    {"external_ref": "a-3", "facts": {"review_score": 7.4, "nights": 5},
+     "price": {"amount_minor": 51000, "currency": "EUR"}},
+    {"external_ref": "a-4", "facts": {"review_score": 9.4, "nights": 5},
+     "price": {"amount_minor": 148000, "currency": "EUR"}},
+    {"external_ref": "a-5", "facts": {"review_score": 6.9, "nights": 5},
+     "price": {"amount_minor": 39000, "currency": "EUR"}}
+  ]
+}
+""",
+        "lisbon": """\
+{
+  "kind_key": "alpha",
+  "matchable": ["place"],
+  "match": {"place": ["Lisbon"]},
+  "options": [
+    {"external_ref": "b-1", "facts": {"review_score": 8.2, "nights": 3},
+     "price": {"amount_minor": 62000, "currency": "ILS"}},
+    {"external_ref": "b-2", "facts": {"review_score": 7.0, "nights": 3},
+     "price": {"amount_minor": 41000, "currency": "ILS"}},
+    {"external_ref": "b-3", "facts": {"review_score": 9.0, "nights": 3},
+     "price": {"amount_minor": 118000, "currency": "ILS"}}
+  ]
+}
+""",
+    },
+    "beta": {
+        "everywhere": """\
+{
+  "kind_key": "beta",
+  "matchable": ["place"],
+  "options": [
+    {"external_ref": "c-1", "facts": {"comfort": "basic"},
+     "price": {"amount_minor": 12000, "currency": "EUR"}},
+    {"external_ref": "c-2", "facts": {"comfort": "premium"},
+     "price": {"amount_minor": 45000, "currency": "EUR"}}
+  ]
+}
+""",
+    },
+}
+
+
+def write_option_fixtures(
+    root: Path, fixtures: Mapping[str, Mapping[str, str]] = SAMPLE_OPTION_FIXTURES
+) -> Path:
+    """Write a Fixture Provider tree — ``<root>/<kind_key>/<name>.json`` — and return ``root``."""
+    for kind_key, files in fixtures.items():
+        directory = root / kind_key
+        directory.mkdir(parents=True, exist_ok=True)
+        for name, text in files.items():
+            (directory / f"{name}.json").write_text(text, encoding="utf-8")
+    return root
+
+
 def write_keywords(config_dir: Path, tables: Mapping[str, str] | None = None) -> Path:
     """Write keyword phrase tables where ``Settings`` expects them, and return the directory."""
     declared = {"en": SAMPLE_KEYWORDS} if tables is None else tables
@@ -248,6 +322,18 @@ def keyword_files(tmp_path: Path) -> Path:
     than a quiet degradation.
     """
     return write_keywords(tmp_path / "config")
+
+
+@pytest.fixture
+def option_fixture_dir(tmp_path: Path) -> Path:
+    """A Fixture Provider tree for ``catalog_file``'s enabled kinds, inside this test's tmp_path.
+
+    From F06 on, "a healthy installation" means this too — though a *missing* tree is not a
+    broken one: the Fixture Provider answers a query it has no recording for with a synthetic
+    set, so that a demonstration never dead-ends. What this fixture buys is recorded data to
+    assert on.
+    """
+    return write_option_fixtures(tmp_path / "fixtures" / "options")
 
 
 @pytest.fixture

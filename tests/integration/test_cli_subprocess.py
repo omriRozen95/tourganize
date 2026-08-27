@@ -24,6 +24,9 @@ SHIPPED_SCHEMAS = REPO_ROOT / "config" / "catalog" / "schemas"
 #: The keyword interpreter's shipped phrase tables, pointed at for the same reason again: the
 #: ``turn_interpreter`` check in ``doctor`` reads them, so this is what proves they parse.
 SHIPPED_KEYWORDS = REPO_ROOT / "config" / "interpretation"
+#: The Fixture Provider's recorded option data, pointed at for the reason the catalog is: only
+#: a subprocess reading the *shipped* tree can prove the shipped tree loads and serves options.
+SHIPPED_FIXTURES = REPO_ROOT / "fixtures" / "options"
 
 
 def _run(*arguments: str, tmp_path: Path, **extra: str) -> subprocess.CompletedProcess[str]:
@@ -35,6 +38,7 @@ def _run(*arguments: str, tmp_path: Path, **extra: str) -> subprocess.CompletedP
         "TOURGANIZE_CATALOG_PATH": str(SHIPPED_CATALOG),
         "TOURGANIZE_SCHEMA_DIR": str(SHIPPED_SCHEMAS),
         "TOURGANIZE_KEYWORD_CONFIG_DIR": str(SHIPPED_KEYWORDS),
+        "TOURGANIZE_FIXTURE_DIR": str(SHIPPED_FIXTURES),
         "TOURGANIZE_DATA_DIR": str(tmp_path / "var"),
     }
     environment.update(extra)
@@ -82,6 +86,14 @@ def _shipped_kinds_by_weight() -> list[str]:
     return [key for _weight, _order, key in sorted(declared)]
 
 
+#: Two cities the shipped fixture tree has recorded options for, in the order a schema's place
+#: fields are filled from. Two rather than one because a Kind with *two* blocking places is a
+#: route — an origin and a destination — and filling both with the same city describes a journey
+#: nobody takes and nobody recorded. Read as a pair rather than named per field, so this suite
+#: still knows no travel topic.
+SAMPLE_PLACES = ("Tel Aviv", "Paris")
+
+
 def _blocking_values_of(kind_key: str) -> dict[str, object]:
     """A plausible value for each blocking field of ``kind_key``'s shipped schema."""
     schema = next(
@@ -92,8 +104,14 @@ def _blocking_values_of(kind_key: str) -> dict[str, object]:
     blocking = re.findall(
         r"- name: (\w+)[^\n]*\n\s+field_kind: (\w+)\n\s+obligation: blocking", schema
     )
-    sample: dict[str, object] = {"place": "Paris", "date_range": "2026-10-23/2026-10-28"}
-    return {name: sample.get(kind, sample["place"]) for name, kind in blocking}
+    supplied: dict[str, object] = {}
+    places = iter(SAMPLE_PLACES)
+    for name, field_kind in blocking:
+        if field_kind == "date_range":
+            supplied[name] = "2026-10-23/2026-10-28"
+        else:
+            supplied[name] = next(places, SAMPLE_PLACES[-1])
+    return supplied
 
 
 def test_version(tmp_path: Path) -> None:
@@ -123,6 +141,90 @@ def test_doctor_redacts_secrets_from_a_secrets_file(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert "leak-me-not" not in result.stdout + result.stderr
     assert "TOURGANIZE_PROVIDER_API_KEY=***" in result.stdout
+
+
+def _slate_rows(out: str) -> list[list[str]]:
+    """The printed Option Slate's rows as columns."""
+    lines = out.splitlines()
+    rule = next(index for index, line in enumerate(lines) if line.strip().startswith("---"))
+    return [line.split() for line in itertools.takewhile(bool, lines[rule + 1 :])]
+
+
+def test_the_shipped_fixture_tree_serves_a_slate_for_the_shipped_kinds(tmp_path: Path) -> None:
+    """F06's Definition of done, run against the files the application actually ships with."""
+    kind = _first_shipped_kind()
+    supplied = json.dumps(_blocking_values_of(kind))
+
+    result = _run("options", "search", "--kind", kind, "--set", supplied, tmp_path=tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"{kind} (schema " in result.stdout
+    assert "diagnostics: none" in result.stdout
+    rows = _slate_rows(result.stdout)
+    assert len(rows) == 3
+    for row in rows:
+        assert row[0].startswith("fixture:")
+        assert row[2] in {"EUR", "ILS"}
+        assert "review_score=" in " ".join(row)
+
+
+def test_the_shipped_slate_is_byte_identical_across_two_processes(tmp_path: Path) -> None:
+    """Determinism, proven where it matters: two operating-system processes, one answer."""
+    kind = _first_shipped_kind()
+    supplied = json.dumps(_blocking_values_of(kind))
+    arguments = ("options", "search", "--kind", kind, "--set", supplied)
+
+    first = _run(*arguments, tmp_path=tmp_path)
+    second = _run(*arguments, tmp_path=tmp_path)
+
+    assert first.returncode == second.returncode == 0
+    assert first.stdout == second.stdout
+
+
+def test_the_slate_size_reaches_the_installed_command(tmp_path: Path) -> None:
+    kind = _first_shipped_kind()
+    supplied = json.dumps(_blocking_values_of(kind))
+
+    result = _run(
+        "options",
+        "search",
+        "--kind",
+        kind,
+        "--set",
+        supplied,
+        tmp_path=tmp_path,
+        TOURGANIZE_SLATE_SIZE="1",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(_slate_rows(result.stdout)) == 1
+
+
+def test_doctor_resolves_the_option_sources_of_every_shipped_kind(tmp_path: Path) -> None:
+    result = _run("doctor", tmp_path=tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "OptionSlatePlanner: PlanningService" in result.stdout
+    assert "[ok  ] option_sources: " in result.stdout
+    assert "3 of 3 with recorded data" in result.stdout
+
+
+def test_a_per_kind_source_profile_reaches_doctor(tmp_path: Path) -> None:
+    """F06's Definition of done, in its own spelling: two Kinds, each named with its profile."""
+    kinds = _shipped_kinds_by_weight()[:2]
+    profile = ",".join(f"{kind}=fixture" for kind in kinds)
+
+    result = _run("doctor", tmp_path=tmp_path, TOURGANIZE_OPTION_SOURCE_PROFILE=profile)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"option_source_profile: {profile} (default fixture)" in result.stdout
+
+
+def test_asking_for_a_provider_this_release_cannot_build_exits_3(tmp_path: Path) -> None:
+    result = _run("doctor", tmp_path=tmp_path, TOURGANIZE_OPTION_SOURCE_PROFILE="live")
+
+    assert result.returncode == 3
+    assert "F24" in result.stderr
 
 
 def test_a_stub_command_exits_2(tmp_path: Path) -> None:

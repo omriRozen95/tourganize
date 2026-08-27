@@ -87,6 +87,29 @@ def test_the_cli_may_not_import_an_adapter() -> None:
     assert judge(edge) == [f"only the Composition Root may import adapters: {edge}"]
 
 
+def test_one_adapter_package_may_not_import_another() -> None:
+    """F06's own rule, and every adapter's: ``adapters.options`` reaches no other adapter.
+
+    A Fixture Provider that imported the terminal surface, or the clock's fake, would be an
+    adapter that cannot be swapped out on its own — which is the whole point of the layout. The
+    import-linter contract "Adapter sub-packages are independent of each other" is the gate; this
+    is the same rule read off the source, so it still holds without the tool installed.
+    """
+    outward = ImportEdge(
+        "tourganize.adapters.options.registry", "tourganize.adapters.presentation.terminal", 1
+    )
+    inward = ImportEdge(
+        "tourganize.adapters.telemetry.jsonl", "tourganize.adapters.options.fixture", 1
+    )
+    within = ImportEdge(
+        "tourganize.adapters.options.registry", "tourganize.adapters.options.fixture", 1
+    )
+
+    assert judge(outward) == [f"adapter sub-packages must stay independent: {outward}"]
+    assert judge(inward) == [f"adapter sub-packages must stay independent: {inward}"]
+    assert judge(within) == []
+
+
 def test_the_composition_root_may() -> None:
     edge = ImportEdge("tourganize.application.composition", "tourganize.adapters.clock.system", 1)
 

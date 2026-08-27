@@ -119,20 +119,25 @@ def test_the_container_reports_its_adapters_by_name(settings_factory: SettingsFa
         "ComponentCatalog": "YamlComponentCatalog",
         "PriorityPolicy": "WeightedCatalogPolicy",
         "TurnInterpreter": "KeywordTurnInterpreter",
+        "OptionSourceRegistry": "SourceRegistry",
+        "OptionRanking": "CheapestFirstRanking",
+        "OptionSlatePlanner": "PlanningService",
     }
 
 
 def test_ports_awaiting_a_feature_are_declared_not_forgotten() -> None:
-    assert PENDING_PORTS["OptionSlatePlanner"] == "F06"
+    assert PENDING_PORTS["PresentationSurface"] == "F07"
     assert PENDING_PORTS["LlmGateway"] == "F08"
-    assert "PresentationSurface" in PENDING_PORTS
+    assert "SessionRepository" in PENDING_PORTS
 
 
 def test_a_wired_port_is_removed_from_the_pending_list() -> None:
-    """F02 the catalog, F04 the policy, F05 the interpreter: none of them is missing now."""
+    """F02 the catalog, F04 the policy, F05 the interpreter, F06 the last two: none is missing."""
     assert "ComponentCatalog" not in PENDING_PORTS
     assert "PriorityPolicy" not in PENDING_PORTS
     assert "TurnInterpreter" not in PENDING_PORTS
+    assert "OptionSource" not in PENDING_PORTS
+    assert "OptionSlatePlanner" not in PENDING_PORTS
 
 
 def test_the_keyword_interpreter_is_pointed_at_the_configured_phrase_tables(
