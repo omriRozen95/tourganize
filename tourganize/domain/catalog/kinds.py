@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from tourganize.domain.errors import InvariantViolationError, UnknownComponentKindError
-from tourganize.domain.invariants import require_text
+from tourganize.domain.invariants import MESSAGE_KEY_PATTERN, require_key, require_text
 
 __all__ = [
     "KIND_KEY_PATTERN",
@@ -37,8 +37,6 @@ __all__ = [
 #: A ``kind_key`` is lower snake case. It is an identifier used in config keys, message keys
 #: and telemetry fields, so it is kept to a shape that is safe in all three.
 KIND_KEY_PATTERN: Final = re.compile(r"[a-z][a-z0-9_]*")
-
-_MESSAGE_KEY_PATTERN: Final = re.compile(r"[a-z][a-z0-9_.]*")
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +51,8 @@ class ComponentKind:
     enabled: bool = True
 
     def __post_init__(self) -> None:
-        _require_key(self.kind_key, "kind_key", KIND_KEY_PATTERN)
-        _require_key(self.message_key, "message_key", _MESSAGE_KEY_PATTERN)
+        require_key(self.kind_key, "kind_key", KIND_KEY_PATTERN)
+        require_key(self.message_key, "message_key", MESSAGE_KEY_PATTERN)
         require_text(self.schema_key, "schema_key")
         if type(self.priority_weight) is not int:
             raise InvariantViolationError(
@@ -66,7 +64,7 @@ class ComponentKind:
                 f"got {self.requires_outcome_of!r}"
             )
         for referenced in self.requires_outcome_of:
-            _require_key(referenced, f"{self.kind_key}.requires_outcome_of", KIND_KEY_PATTERN)
+            require_key(referenced, f"{self.kind_key}.requires_outcome_of", KIND_KEY_PATTERN)
         if self.kind_key in self.requires_outcome_of:
             raise InvariantViolationError(f"{self.kind_key}: a kind cannot await its own outcome")
 
@@ -156,9 +154,3 @@ def find_kind(kinds: Sequence[ComponentKind], kind_key: str, origin: str) -> Com
     raise UnknownComponentKindError(
         f"unknown Component Kind {kind_key!r}; {origin} declares {declared}"
     )
-
-
-def _require_key(value: str, field: str, pattern: re.Pattern[str]) -> None:
-    require_text(value, field)
-    if not pattern.fullmatch(value):
-        raise InvariantViolationError(f"{field} must match {pattern.pattern!r}, got {value!r}")

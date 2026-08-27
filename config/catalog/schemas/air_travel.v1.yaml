@@ -1,0 +1,56 @@
+# The Requirement Schema of the `air_travel` Component Kind. See lodging.v1.yaml for the
+# meaning of each key; this file only differs in what it declares.
+#
+# `when` accepts a whole range or a single departure date, because a one-way trip has no
+# return and must not be blocked waiting for one. `return_date` stays optional for the same
+# reason — the traveller who wants one supplies it, and nobody else is asked.
+schema_key: air_travel.v1
+component_kind: air_travel
+fields:
+  - name: origin                    # where the traveller starts from
+    field_kind: place
+    obligation: blocking
+    prompt_message_key: ask.air_travel.origin
+    example_message_key: example.air_travel.origin
+  - name: destination
+    field_kind: place
+    obligation: blocking
+    prompt_message_key: ask.air_travel.destination
+    example_message_key: example.air_travel.destination
+  - name: date_range
+    field_kind: date_range
+    obligation: blocking
+    prompt_message_key: ask.air_travel.date_range
+    example_message_key: example.air_travel.date_range
+  - name: depart_date
+    field_kind: date
+    obligation: optional
+    prompt_message_key: ask.air_travel.depart_date
+  - name: return_date
+    field_kind: date
+    obligation: optional
+    prompt_message_key: ask.air_travel.return_date
+  - name: passengers
+    field_kind: integer
+    obligation: optional
+    prompt_message_key: ask.air_travel.passengers
+    constraints: {min: 1, max: 9}
+  - name: cabin_class
+    field_kind: enum
+    obligation: optional
+    prompt_message_key: ask.air_travel.cabin_class
+    enum_values: [economy, premium_economy, business, first]
+  - name: max_stops
+    field_kind: integer
+    obligation: optional
+    prompt_message_key: ask.air_travel.max_stops
+    constraints: {min: 0, max: 3}
+  - name: budget_ceiling
+    field_kind: money
+    obligation: optional
+    prompt_message_key: ask.air_travel.budget_ceiling
+blocking_rules:
+  - name: route
+    any_of: [[origin, destination]]
+  - name: when                      # a range, or a departure date on its own for a one-way
+    any_of: [[date_range], [depart_date]]

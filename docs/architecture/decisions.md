@@ -346,3 +346,36 @@ the domain: parsing sits in `platform`, behind whichever port reads the file.
 **Reversal path.** Add `pyyaml` to `[project.dependencies]` and replace the body of
 `read_yaml_subset` with `yaml.safe_load`, keeping the same `ConfigurationError` on failure. One module,
 one dependency line; no caller changes, because every caller already receives plain Python data.
+
+---
+
+## D14 — The Requirement Schema is a parameter of `with_updates`, not a field of the Requirement Set
+
+**Status:** accepted · **Owning feature:** [F03](../features/F03-requirement-schemas-and-gap-analysis.md) · **Reversed by:** no planned feature (see below)
+
+**Decision.** `RequirementSet.with_updates(updates, *, schema)` takes the Requirement Schema as a
+keyword argument. F03's Contract block originally wrote `with_updates(self, updates)`; this entry
+records the amendment, because a normative Contract is not something to widen quietly.
+
+**Rationale.** The merge cannot be done without the schema: it stores every value in its Field Kind's
+**normalised** form, and what "normalised" means for one field is a fact about that field's Field
+Spec and nothing else. The question is only *where* the schema comes from, and there were three
+candidates: a field on the set, a module-level `merge(schema, set, updates)`, or a parameter. A field
+on the set is the one that is actually wrong — a Requirement Set is small, copied on every turn and
+persisted by F12, and a set carrying a schema would persist a copy of a versioned file alongside every
+session, with two of them able to disagree after an upgrade. Between the other two, a parameter keeps
+one call reading as one operation. Refusing an undeclared field (`UnknownFieldError`) happens here too,
+but that is a consequence, not the reason: a module-level merge, or a check when the Requirement Update
+is constructed, would raise it equally well.
+
+**Cost.** Every caller of `with_updates` must have the schema to hand — in practice the Director, which
+has just asked the `ComponentCatalog` for it — and a Requirement Set cannot merge anything on its own,
+which makes it a slightly less self-sufficient object than it looks. Tests pay this too: every merge
+test declares a schema. The keyword-only form is what keeps the cost honest, since no call site can
+pass one by accident.
+
+**Reversal path.** Move the body to a module-level `merge(schema, requirement_set, updates)` in
+`domain/requirements/values.py` and leave `with_updates` delegating to it, or delete it. The merge
+logic does not move; only the receiver does. One module, and the call sites F05 and F12 will have by
+then. Putting the schema *on* the set is the direction this decision closes, and reopening it means
+answering the persistence question first.

@@ -87,7 +87,8 @@ def build_container(settings: Settings) -> Container:
         telemetry_sink=_build_telemetry_sink(settings),
         # Constructing the catalog does not read the file: a broken catalog has to be a
         # failing `doctor` check, not an exception thrown while the container is being wired.
-        component_catalog=YamlComponentCatalog(settings.catalog_path),
+        # The same laziness covers the Requirement Schemas it resolves ``schema_key`` against.
+        component_catalog=YamlComponentCatalog(settings.catalog_path, settings.schema_dir),
     )
 
 

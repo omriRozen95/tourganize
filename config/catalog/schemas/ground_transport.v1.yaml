@@ -1,0 +1,48 @@
+# The Requirement Schema of the `ground_transport` Component Kind. See lodging.v1.yaml for
+# the meaning of each key.
+#
+# Only the pickup place blocks: a traveller who says nothing about where they will leave the
+# vehicle is assumed to bring it back, and `dropoff_place` stays an optional filter.
+schema_key: ground_transport.v1
+component_kind: ground_transport
+fields:
+  - name: pickup_place              # where the traveller collects the vehicle
+    field_kind: place
+    obligation: blocking
+    prompt_message_key: ask.ground_transport.pickup_place
+  - name: date_range
+    field_kind: date_range
+    obligation: blocking
+    prompt_message_key: ask.ground_transport.date_range
+    example_message_key: example.ground_transport.date_range
+  - name: pickup_date
+    field_kind: date
+    obligation: optional
+    prompt_message_key: ask.ground_transport.pickup_date
+  - name: dropoff_date
+    field_kind: date
+    obligation: optional
+    prompt_message_key: ask.ground_transport.dropoff_date
+  - name: dropoff_place
+    field_kind: place
+    obligation: optional
+    prompt_message_key: ask.ground_transport.dropoff_place
+  - name: passengers
+    field_kind: integer
+    obligation: optional
+    prompt_message_key: ask.ground_transport.passengers
+    constraints: {min: 1, max: 8}
+  - name: vehicle_class
+    field_kind: enum
+    obligation: optional
+    prompt_message_key: ask.ground_transport.vehicle_class
+    enum_values: [compact, standard, estate, van, premium]
+  - name: budget_ceiling
+    field_kind: money
+    obligation: optional
+    prompt_message_key: ask.ground_transport.budget_ceiling
+blocking_rules:
+  - name: where
+    any_of: [[pickup_place]]
+  - name: when                      # a range, or an explicit pickup and drop-off pair
+    any_of: [[date_range], [pickup_date, dropoff_date]]

@@ -7,14 +7,16 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from conftest import write_catalog
+from conftest import write_catalog, write_schemas
 
 from tourganize import __version__
 from tourganize.cli import (
+    CATALOG_ACTIONS,
     EXIT_CONFIGURATION_ERROR,
     EXIT_DOCTOR_FAILED,
     EXIT_NOT_IMPLEMENTED,
     EXIT_OK,
+    EXIT_USAGE_ERROR,
     PLANNED_CATALOG_COMMANDS,
     PLANNED_COMMANDS,
     main,
@@ -28,8 +30,9 @@ def _run(argv: list[str], environ: Mapping[str, str] | None = None) -> tuple[int
 
 
 def _environ(tmp_path: Path, **extra: str) -> dict[str, str]:
-    """A healthy installation in ``tmp_path``, Component Catalog included."""
+    """A healthy installation in ``tmp_path``: Component Catalog and Requirement Schemas."""
     write_catalog(tmp_path / "config")
+    write_schemas(tmp_path / "config")
     environ = {
         "TOURGANIZE_ENV": "test",
         "TOURGANIZE_CONFIG_DIR": str(tmp_path / "config"),
@@ -102,6 +105,7 @@ def test_catalog_validate_accepts_a_sound_catalog(tmp_path: Path) -> None:
 
     assert code == EXIT_OK
     assert "no problems found" in out
+    assert "2 Requirement Schemas" in out
     assert err == ""
 
 
@@ -166,9 +170,186 @@ def test_catalog_without_an_action_says_what_it_offers(tmp_path: Path) -> None:
     code, out, err = _run(["catalog"], environ)
 
     assert code == EXIT_NOT_IMPLEMENTED
-    assert "show" in err and "validate" in err
+    assert all(action in err for action in CATALOG_ACTIONS)
     assert "does not exist" not in err
     assert out == ""
+
+
+#: A broken Requirement Schema per validation rule, with the phrase the CLI must print for it.
+#: These are the four the Definition of Done names.
+BROKEN_SCHEMAS = {
+    "rule_names_an_undeclared_field": (
+        "which the schema does not declare",
+        "schema_key: alpha.v1\ncomponent_kind: alpha\nfields:\n"
+        "  - {name: place, field_kind: place, obligation: blocking,"
+        " prompt_message_key: ask.alpha.place}\n"
+        "blocking_rules:\n  - {name: where, any_of: [[nowhere]]}\n",
+    ),
+    "field_without_a_prompt_message_key": (
+        "missing required key(s) prompt_message_key",
+        "schema_key: alpha.v1\ncomponent_kind: alpha\nfields:\n"
+        "  - {name: place, field_kind: place, obligation: blocking}\n",
+    ),
+    "enum_field_without_values": (
+        "must declare its enum_values",
+        "schema_key: alpha.v1\ncomponent_kind: alpha\nfields:\n"
+        "  - {name: comfort, field_kind: enum, obligation: blocking,"
+        " prompt_message_key: ask.alpha.comfort}\n",
+    ),
+    "component_kind_disagrees_with_the_catalog": (
+        "but that schema describes 'elsewhere'",
+        "schema_key: alpha.v1\ncomponent_kind: elsewhere\nfields:\n"
+        "  - {name: place, field_kind: place, obligation: blocking,"
+        " prompt_message_key: ask.alpha.place}\n",
+    ),
+}
+
+
+@pytest.mark.parametrize("rule", sorted(BROKEN_SCHEMAS))
+def test_catalog_validate_exits_3_for_a_broken_schema(rule: str, tmp_path: Path) -> None:
+    expected, body = BROKEN_SCHEMAS[rule]
+    environ = _environ(tmp_path)
+    write_schemas(tmp_path / "config", {"alpha.v1": body})
+
+    code, out, err = _run(["catalog", "validate"], environ)
+
+    assert code == EXIT_CONFIGURATION_ERROR
+    assert expected in err
+    assert out == ""
+
+
+def test_catalog_validate_exits_3_when_a_schema_file_is_missing(tmp_path: Path) -> None:
+    environ = _environ(tmp_path)
+    (tmp_path / "config" / "catalog" / "schemas" / "alpha.v1.yaml").unlink()
+
+    code, _out, err = _run(["catalog", "validate"], environ)
+
+    assert code == EXIT_CONFIGURATION_ERROR
+    assert "alpha.v1.yaml" in err
+
+
+def test_catalog_validate_does_not_demand_a_schema_for_a_disabled_kind(tmp_path: Path) -> None:
+    """`gamma` is disabled and has no schema file; a kind nobody can plan needs none."""
+    code, out, _err = _run(["catalog", "validate"], _environ(tmp_path))
+
+    assert code == EXIT_OK
+    assert "2 Requirement Schemas" in out
+
+
+def test_catalog_gaps_on_an_empty_set_reports_every_rule_and_every_filter(
+    tmp_path: Path,
+) -> None:
+    code, out, err = _run(["catalog", "gaps", "--kind", "alpha"], _environ(tmp_path))
+
+    assert code == EXIT_OK
+    assert err == ""
+    assert "is_plannable: false" in out
+    assert "blocking (2):" in out
+    assert "where" in out and "when" in out
+    assert "optional (5):" in out
+    assert "ask.alpha.place" in out
+    assert "date_range  |  starts_on + ends_on" in out
+
+
+def test_catalog_gaps_with_the_blocking_values_supplied_is_plannable(tmp_path: Path) -> None:
+    code, out, _err = _run(
+        [
+            "catalog",
+            "gaps",
+            "--kind",
+            "alpha",
+            "--set",
+            '{"place": "Paris", "date_range": "2026-10-23/2026-10-28"}',
+        ],
+        _environ(tmp_path),
+    )
+
+    assert code == EXIT_OK
+    assert "is_plannable: true" in out
+    assert "blocking (0):" in out
+    assert "optional (5):" in out
+
+
+def test_catalog_gaps_reports_a_present_but_invalid_value_as_invalid(tmp_path: Path) -> None:
+    code, out, _err = _run(
+        [
+            "catalog",
+            "gaps",
+            "--kind",
+            "alpha",
+            "--set",
+            '{"place": "Paris", "date_range": "2026-10-28/2026-10-23"}',
+        ],
+        _environ(tmp_path),
+    )
+
+    assert code == EXIT_OK
+    assert "is_plannable: false" in out
+    assert "blocking (0):" in out
+    assert "invalid (1):" in out
+    assert "requirement.invalid.date_range_reversed" in out
+
+
+def test_catalog_gaps_refuses_an_unknown_kind(tmp_path: Path) -> None:
+    code, out, err = _run(["catalog", "gaps", "--kind", "nowhere"], _environ(tmp_path))
+
+    assert code == EXIT_USAGE_ERROR
+    assert "nowhere" in err
+    assert out == ""
+
+
+def test_catalog_gaps_refuses_an_unknown_field_rather_than_ignoring_it(tmp_path: Path) -> None:
+    """It usually means an extraction prompt and a schema have drifted apart."""
+    code, out, err = _run(
+        ["catalog", "gaps", "--kind", "alpha", "--set", '{"nowhere": 1}'], _environ(tmp_path)
+    )
+
+    assert code == EXIT_USAGE_ERROR
+    assert "nowhere" in err
+    assert out == ""
+
+
+@pytest.mark.parametrize("supplied", ["not json", "[1, 2]", '"just a string"'])
+def test_catalog_gaps_refuses_a_set_that_is_not_a_json_object(
+    supplied: str, tmp_path: Path
+) -> None:
+    code, out, err = _run(
+        ["catalog", "gaps", "--kind", "alpha", "--set", supplied], _environ(tmp_path)
+    )
+
+    assert code == EXIT_USAGE_ERROR
+    assert "--set" in err
+    assert out == ""
+
+
+def test_catalog_gaps_needs_a_kind(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as raised:
+        main(["catalog", "gaps"], environ=_environ(tmp_path))
+
+    assert raised.value.code == EXIT_USAGE_ERROR
+
+
+def test_catalog_gaps_exits_3_when_the_schema_is_missing(tmp_path: Path) -> None:
+    environ = _environ(tmp_path)
+    (tmp_path / "config" / "catalog" / "schemas" / "alpha.v1.yaml").unlink()
+
+    code, out, err = _run(["catalog", "gaps", "--kind", "alpha"], environ)
+
+    assert code == EXIT_CONFIGURATION_ERROR
+    assert "alpha.v1.yaml" in err
+    assert out == ""
+
+
+def test_the_schema_directory_can_be_moved_on_its_own(tmp_path: Path) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    write_schemas(elsewhere)
+    environ = _environ(tmp_path, TOURGANIZE_SCHEMA_DIR=str(elsewhere / "catalog" / "schemas"))
+    (tmp_path / "config" / "catalog" / "schemas" / "alpha.v1.yaml").unlink()
+
+    code, out, _err = _run(["catalog", "gaps", "--kind", "alpha"], environ)
+
+    assert code == EXIT_OK
+    assert "is_plannable: false" in out
 
 
 def test_doctor_reports_settings_adapters_and_ports(tmp_path: Path) -> None:
@@ -177,6 +358,7 @@ def test_doctor_reports_settings_adapters_and_ports(tmp_path: Path) -> None:
     assert code == EXIT_OK
     assert f"tourganize {__version__}" in out
     assert "telemetry_sink: jsonl" in out
+    assert "schema_dir: " in out
     assert "TelemetrySink: JsonlTelemetrySink" in out
     assert "ComponentCatalog: YamlComponentCatalog" in out
     assert "[ok  ] clock" in out
