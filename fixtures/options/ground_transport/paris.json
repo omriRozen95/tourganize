@@ -1,0 +1,28 @@
+{
+  "kind_key": "ground_transport",
+  "matchable": ["pickup_place", "date_range"],
+  "match": {
+    "pickup_place": ["Paris", "פריז", "CDG"],
+    "date_range": ["2026-01-01/2027-12-31"]
+  },
+  "options": [
+    {
+      "external_ref": "px-ground-001",
+      "facts": {"supplier": "Gare Rentals", "vehicle_class": "compact",
+                "transmission": "manual", "unlimited_mileage": true, "review_score": 7.7},
+      "price": {"amount_minor": 18900, "currency": "EUR"}
+    },
+    {
+      "external_ref": "px-ground-002",
+      "facts": {"supplier": "Île Mobility", "vehicle_class": "estate",
+                "transmission": "automatic", "unlimited_mileage": true, "review_score": 8.6},
+      "price": {"amount_minor": 34500, "currency": "EUR"}
+    },
+    {
+      "external_ref": "px-ground-003",
+      "facts": {"supplier": "Roissy Fleet", "vehicle_class": "van",
+                "transmission": "manual", "unlimited_mileage": false, "review_score": 6.5},
+      "price": {"amount_minor": 47000, "currency": "EUR"}
+    }
+  ]
+}

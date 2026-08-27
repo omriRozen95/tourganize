@@ -1,0 +1,46 @@
+{
+  "kind_key": "air_travel",
+  "matchable": ["origin", "destination", "date_range"],
+  "match": {
+    "origin": ["Tel Aviv", "תל אביב", "TLV"],
+    "destination": ["Paris", "פריז", "CDG"],
+    "date_range": ["2026-01-01/2027-12-31"]
+  },
+  "options": [
+    {
+      "external_ref": "tlv-cdg-001",
+      "facts": {"carrier": "LY", "flight_number": "LY315", "stops": 0,
+                "depart_local": "2026-10-23T06:20", "arrive_local": "2026-10-23T10:05",
+                "duration_minutes": 285, "cabin_class": "economy", "review_score": 7.9},
+      "price": {"amount_minor": 42500, "currency": "EUR"}
+    },
+    {
+      "external_ref": "tlv-cdg-002",
+      "facts": {"carrier": "AF", "flight_number": "AF1621", "stops": 0,
+                "depart_local": "2026-10-23T11:40", "arrive_local": "2026-10-23T15:20",
+                "duration_minutes": 280, "cabin_class": "economy", "review_score": 8.3},
+      "price": {"amount_minor": 38900, "currency": "EUR"}
+    },
+    {
+      "external_ref": "tlv-cdg-003",
+      "facts": {"carrier": "AF", "flight_number": "AF1721", "stops": 0,
+                "depart_local": "2026-10-23T16:15", "arrive_local": "2026-10-23T19:55",
+                "duration_minutes": 280, "cabin_class": "business", "review_score": 9.0},
+      "price": {"amount_minor": 132000, "currency": "EUR"}
+    },
+    {
+      "external_ref": "tlv-cdg-004",
+      "facts": {"carrier": "W6", "flight_number": "W61474", "stops": 1,
+                "depart_local": "2026-10-23T04:05", "arrive_local": "2026-10-23T13:40",
+                "duration_minutes": 515, "cabin_class": "economy", "review_score": 6.4},
+      "price": {"amount_minor": 21400, "currency": "EUR"}
+    },
+    {
+      "external_ref": "tlv-cdg-005",
+      "facts": {"carrier": "LH", "flight_number": "LH687", "stops": 1,
+                "depart_local": "2026-10-23T09:10", "arrive_local": "2026-10-23T17:30",
+                "duration_minutes": 440, "cabin_class": "premium_economy", "review_score": 8.1},
+      "price": {"amount_minor": 61500, "currency": "EUR"}
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "kind_key": "dining",
+  "matchable": ["place", "date_range"],
+  "match": {
+    "place": ["Paris", "פריז"],
+    "date_range": ["2026-01-01/2027-12-31"]
+  },
+  "options": [
+    {
+      "external_ref": "px-dining-001",
+      "facts": {"name": "Chez Odette", "cuisine": "bistro", "review_score": 8.5,
+                "party_size": 2, "seating": "20:00"},
+      "price": {"amount_minor": 9800, "currency": "EUR"}
+    },
+    {
+      "external_ref": "px-dining-002",
+      "facts": {"name": "Le Comptoir", "cuisine": "brasserie", "review_score": 9.0,
+                "party_size": 2, "seating": "19:30"},
+      "price": {"amount_minor": 15400, "currency": "EUR"}
+    },
+    {
+      "external_ref": "px-dining-003",
+      "facts": {"name": "Kibbutz Marais", "cuisine": "levantine", "review_score": 7.8,
+                "party_size": 4, "seating": "21:00"},
+      "price": {"amount_minor": 6200, "currency": "EUR"}
+    }
+  ]
+}

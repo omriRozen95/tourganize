@@ -27,6 +27,11 @@ way of loading configuration.
 | ``TOURGANIZE_DIALOGUE_OFFER_BATCH`` | Kinds named in one ``offer_unmentioned`` | ``2`` |
 | ``TOURGANIZE_INTERPRETER`` | Turn Interpreter: ``keyword`` or ``model`` | ``keyword`` |
 | ``TOURGANIZE_KEYWORD_CONFIG_DIR`` | Keyword phrase tables | ``$CONFIG_DIR/interpretation`` |
+| ``TOURGANIZE_OPTION_SOURCE_PROFILE`` | Source Profile, or per-kind overrides | ``fixture`` |
+| ``TOURGANIZE_FIXTURE_DIR`` | Root of fixture option data | ``fixtures/options`` |
+| ``TOURGANIZE_SLATE_SIZE`` | Options presented per round | ``3`` |
+| ``TOURGANIZE_OPTION_FILTER_STRICT`` | Optional filters discard instead of demote | ``false`` |
+| ``TOURGANIZE_OPTION_SOURCE_TIMEOUT_SECONDS`` | Per-source time budget | ``10`` |
 
 Three keys are worth a word on. ``TOURGANIZE_CATALOG_PATH`` and ``TOURGANIZE_SCHEMA_DIR``
 follow ``TOURGANIZE_CONFIG_DIR`` unless they are set explicitly, so moving the configuration
@@ -51,6 +56,11 @@ reason: a re-ask limit of zero is a question nobody ever asks.
 :class:`~tourganize.platform.errors.ConfigurationError` raised by the Composition Root, which
 names the feature that delivers it. The alternative — leaving ``model`` out of the choice
 list — would answer "not one of 'keyword'", which is true and useless.
+``TOURGANIZE_OPTION_SOURCE_PROFILE`` follows exactly that convention for ``world`` (F17) and
+``live`` (F24), and adds one thing of its own: it accepts either a single profile name for
+every Component Kind, or a comma-separated list of ``kind_key=profile`` overrides, because a
+client with an account for one topic and none for another has to be able to mix them. See
+:class:`OptionSourceProfile`.
 """
 
 from __future__ import annotations
@@ -77,8 +87,10 @@ __all__ = [
     "Env",
     "InterpreterName",
     "LogFormat",
+    "OptionSourceProfile",
     "PriorityPolicyName",
     "Settings",
+    "SourceProfileName",
     "TelemetrySinkName",
     "default_catalog_path",
     "default_keyword_config_dir",
@@ -92,6 +104,7 @@ LogFormat = Literal["json", "human"]
 TelemetrySinkName = Literal["null", "jsonl"]
 PriorityPolicyName = Literal["weighted", "fixed"]
 InterpreterName = Literal["keyword", "model"]
+SourceProfileName = Literal["fixture", "world", "live"]
 
 PREFIX: Final = "TOURGANIZE_"
 
@@ -100,6 +113,7 @@ _LOG_FORMATS: Final[tuple[LogFormat, ...]] = ("json", "human")
 _TELEMETRY_SINKS: Final[tuple[TelemetrySinkName, ...]] = ("null", "jsonl")
 _PRIORITY_POLICIES: Final[tuple[PriorityPolicyName, ...]] = ("weighted", "fixed")
 _INTERPRETERS: Final[tuple[InterpreterName, ...]] = ("keyword", "model")
+_SOURCE_PROFILES: Final[tuple[SourceProfileName, ...]] = ("fixture", "world", "live")
 
 DEFAULT_CONFIG_DIR: Final = Path("config")
 DEFAULT_DATA_DIR: Final = Path("var")
@@ -108,6 +122,9 @@ TELEMETRY_FILENAME: Final = "telemetry.jsonl"
 CATALOG_RELATIVE_PATH: Final = Path("catalog") / "components.yaml"
 SCHEMAS_RELATIVE_PATH: Final = Path("catalog") / "schemas"
 INTERPRETATION_RELATIVE_PATH: Final = Path("interpretation")
+DEFAULT_FIXTURE_DIR: Final = Path("fixtures") / "options"
+DEFAULT_SLATE_SIZE: Final = 3
+DEFAULT_SOURCE_TIMEOUT_SECONDS: Final = 10.0
 
 #: A ``TOURGANIZE_*`` key ending in one of these is treated as a secret: it is wrapped in
 #: :class:`SecretValue` and never rendered by ``doctor`` or the logs.
@@ -121,6 +138,10 @@ SECRET_KEY_SUFFIXES: Final = (
 )
 
 _ChoiceT = TypeVar("_ChoiceT", bound=str)
+
+#: The spellings a boolean-valued key accepts, either way.
+_TRUE_VALUES: Final = frozenset({"true", "yes", "1", "on"})
+_FALSE_VALUES: Final = frozenset({"false", "no", "0", "off"})
 
 #: Every non-secret key this version understands. ``doctor`` reports ``TOURGANIZE_*`` keys
 #: that are in neither this set nor the secret convention, which catches typos.
@@ -143,8 +164,53 @@ KNOWN_KEYS: Final = frozenset(
         "TOURGANIZE_DIALOGUE_OFFER_BATCH",
         "TOURGANIZE_INTERPRETER",
         "TOURGANIZE_KEYWORD_CONFIG_DIR",
+        "TOURGANIZE_OPTION_SOURCE_PROFILE",
+        "TOURGANIZE_FIXTURE_DIR",
+        "TOURGANIZE_SLATE_SIZE",
+        "TOURGANIZE_OPTION_FILTER_STRICT",
+        "TOURGANIZE_OPTION_SOURCE_TIMEOUT_SECONDS",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class OptionSourceProfile:
+    """Which Option Sources serve which Component Kinds — one value of one key.
+
+    ``TOURGANIZE_OPTION_SOURCE_PROFILE=fixture`` sets the profile for everything.
+    ``TOURGANIZE_OPTION_SOURCE_PROFILE=alpha=live,beta=fixture`` sets it per Component
+    Kind, with :attr:`default` for the Kinds nobody named. Mixing the two spellings in one
+    value is refused: ``fixture,alpha=live`` reads as though the bare word were a fallback,
+    and a configuration that *looks* like it means something it does not is worse than one that
+    is rejected.
+
+    ``kind_key``s are not validated against the Component Catalog here. Settings are resolved
+    before any file is read — that is the whole reason ``doctor`` exists — so an override for a
+    Kind nobody declares is reported by ``doctor``, beside everything else that is wrong with
+    the installation, rather than making every command exit 3.
+    """
+
+    default: SourceProfileName = "fixture"
+    per_kind: Mapping[str, SourceProfileName] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "per_kind", MappingProxyType(dict(self.per_kind)))
+
+    def for_kind(self, kind_key: str) -> SourceProfileName:
+        """The profile in force for ``kind_key``."""
+        return self.per_kind.get(kind_key, self.default)
+
+    @property
+    def names(self) -> tuple[SourceProfileName, ...]:
+        """Every profile this value can select, in a stable order — what has to be buildable."""
+        return tuple(sorted({self.default, *self.per_kind.values()}))
+
+    def describe(self) -> str:
+        """How ``doctor`` prints it: the value as written, normalised."""
+        if not self.per_kind:
+            return self.default
+        overrides = ",".join(f"{key}={self.per_kind[key]}" for key in sorted(self.per_kind))
+        return f"{overrides} (default {self.default})"
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +233,11 @@ class Settings:
     dialogue_offer_batch: int
     interpreter: InterpreterName
     keyword_config_dir: Path
+    option_source_profile: OptionSourceProfile
+    fixture_dir: Path
+    slate_size: int
+    option_filter_strict: bool
+    option_source_timeout_seconds: float
     secrets_file: Path | None = None
     secrets: Mapping[str, SecretValue] = field(default_factory=dict)
     # Later features append fields here; they never re-invent loading.
@@ -218,6 +289,15 @@ class Settings:
                 "TOURGANIZE_KEYWORD_CONFIG_DIR",
                 default_keyword_config_dir(config_dir),
             ),
+            option_source_profile=_source_profile(merged, "TOURGANIZE_OPTION_SOURCE_PROFILE"),
+            fixture_dir=_directory(merged, "TOURGANIZE_FIXTURE_DIR", DEFAULT_FIXTURE_DIR),
+            slate_size=_at_least_one(merged, "TOURGANIZE_SLATE_SIZE", DEFAULT_SLATE_SIZE),
+            option_filter_strict=_flag(merged, "TOURGANIZE_OPTION_FILTER_STRICT", False),
+            option_source_timeout_seconds=_positive_number(
+                merged,
+                "TOURGANIZE_OPTION_SOURCE_TIMEOUT_SECONDS",
+                DEFAULT_SOURCE_TIMEOUT_SECONDS,
+            ),
             secrets_file=secrets_file,
             secrets=_collect_secrets(merged),
         )
@@ -245,6 +325,11 @@ class Settings:
             "dialogue_offer_batch": str(self.dialogue_offer_batch),
             "interpreter": self.interpreter,
             "keyword_config_dir": str(self.keyword_config_dir),
+            "option_source_profile": self.option_source_profile.describe(),
+            "fixture_dir": str(self.fixture_dir),
+            "slate_size": str(self.slate_size),
+            "option_filter_strict": "true" if self.option_filter_strict else "false",
+            "option_source_timeout_seconds": _plain_seconds(self.option_source_timeout_seconds),
             "secrets_file": "unset" if self.secrets_file is None else str(self.secrets_file),
             "secrets": _describe_secrets(self.secrets),
         }
@@ -377,6 +462,82 @@ def _at_least_one(environ: Mapping[str, str], key: str, default: int) -> int:
     if number < 1:
         raise ConfigurationError(f"{key}={number} must be at least 1")
     return number
+
+
+def _flag(environ: Mapping[str, str], key: str, default: bool) -> bool:
+    """A boolean-valued key. ``true``/``false`` and their obvious spellings, nothing else.
+
+    Refused rather than coerced: the classic reading of ``"false"`` as truthy is exactly the
+    kind of setting that appears to be honoured and is not, and ``TOURGANIZE_OPTION_FILTER_STRICT``
+    decides whether a traveller sees options at all.
+    """
+    value = _raw(environ, key)
+    if value is None:
+        return default
+    lowered = value.lower()
+    if lowered in _TRUE_VALUES:
+        return True
+    if lowered in _FALSE_VALUES:
+        return False
+    raise ConfigurationError(
+        f"{key}={value!r} is not a boolean; write one of "
+        f"{', '.join(sorted(_TRUE_VALUES | _FALSE_VALUES))}"
+    )
+
+
+def _positive_number(environ: Mapping[str, str], key: str, default: float) -> float:
+    """A seconds-valued key: a number above zero, or a refusal naming the key."""
+    value = _raw(environ, key)
+    if value is None:
+        return default
+    try:
+        number = float(value)
+    except ValueError:
+        raise ConfigurationError(f"{key}={value!r} is not a number of seconds") from None
+    if number <= 0:
+        raise ConfigurationError(f"{key}={value} must be above zero")
+    return number
+
+
+def _source_profile(environ: Mapping[str, str], key: str) -> OptionSourceProfile:
+    """Read ``fixture`` or ``k1=profile,k2=profile`` into an :class:`OptionSourceProfile`."""
+    value = _raw(environ, key)
+    if value is None:
+        return OptionSourceProfile()
+    entries = [item.strip() for item in value.split(",") if item.strip()]
+    if not entries:
+        return OptionSourceProfile()
+    if not any("=" in entry for entry in entries):
+        if len(entries) > 1:
+            raise ConfigurationError(
+                f"{key}={value!r} names {len(entries)} profiles for every Component Kind; "
+                f"write one profile, or one kind_key=profile per Kind"
+            )
+        return OptionSourceProfile(default=_profile_name(key, entries[0]))
+    per_kind: dict[str, SourceProfileName] = {}
+    for entry in entries:
+        kind_key, separator, name = entry.partition("=")
+        if not separator or not kind_key.strip():
+            raise ConfigurationError(
+                f"{key}={value!r} mixes a bare profile with per-kind overrides at {entry!r}; "
+                f"write every entry as kind_key=profile once one of them is"
+            )
+        per_kind[kind_key.strip()] = _profile_name(f"{key} [{kind_key.strip()}]", name.strip())
+    return OptionSourceProfile(per_kind=per_kind)
+
+
+def _profile_name(key: str, value: str) -> SourceProfileName:
+    for candidate in _SOURCE_PROFILES:
+        if value == candidate:
+            return candidate
+    raise ConfigurationError(
+        f"{key}={value!r} is not one of {', '.join(repr(item) for item in _SOURCE_PROFILES)}"
+    )
+
+
+def _plain_seconds(seconds: float) -> str:
+    """Render a seconds value without a trailing ``.0`` nobody wrote."""
+    return f"{seconds:g}"
 
 
 def _log_level(environ: Mapping[str, str], key: str, default: str) -> str:

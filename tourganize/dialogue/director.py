@@ -1117,7 +1117,13 @@ def _resolve_choice(slate: OptionSlate, reference: str | None) -> PlanOption | N
 
 
 def _option_payload(option: PlanOption) -> Mapping[str, object]:
-    """One Plan Option as structured data. No prose: there is none on a Plan Option to find."""
+    """One Plan Option as structured data. No prose: there is none on a Plan Option to find.
+
+    ``filter_notes`` are carried through rather than dropped. They are the optional filters this
+    option fails (F06), and a slate that showed a €160 room to someone who asked for under €150
+    *without* saying so would read as not having listened — which is the whole risk soft
+    filtering runs. Field names, not sentences: the wording is the Message Catalogue's.
+    """
     return {
         "option_id": option.option_id,
         "price": (
@@ -1127,6 +1133,7 @@ def _option_payload(option: PlanOption) -> Mapping[str, object]:
         ),
         "facts": dict(option.facts),
         "source_id": option.provenance.source_id,
+        "filter_notes": option.filter_notes,
     }
 
 

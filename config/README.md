@@ -40,6 +40,14 @@ plans them in the order this file lists them and ignores the weights) and
 `TOURGANIZE_AGENDA_FAILURE_SKIP` (default `2`, how many failures in a row a Kind gets before the
 Agenda steps over it). Neither can affect the Mentioned-First Rule, which is not configurable.
 
+Option *data* is not here: it is `fixtures/options/<kind_key>/*.json`, and
+[`fixtures/README.md`](../fixtures/README.md) documents it. The split is deliberate — this directory
+holds what the application *is configured to do*, and that one holds what it has *recorded*.
+
+An optional field's `constraints` say how it filters a Plan Option (`filters` names the option fact,
+`comparison` is `at_most`/`at_least`/`equals`), which is what keeps a fourth Component Kind's filters
+configuration too. [D19](../docs/architecture/decisions.md) records why.
+
 `interpretation/` is F05's, and it is the second reason no travel topic appears in `tourganize/`:
 "this word raises that Component Kind" is exactly such a naming, so the per-kind keyword lists live
 here, beside the catalog that declares the kinds. One file per Locale Tag — `keywords.en.yaml` and

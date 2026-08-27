@@ -11,6 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     TOURGANIZE_CONFIG_DIR=/app/config \
+    TOURGANIZE_FIXTURE_DIR=/app/fixtures/options \
     TOURGANIZE_DATA_DIR=/var/lib/tourganize
 
 # Non-root from the start: the data directory is the only writable path the app needs.
@@ -25,7 +26,12 @@ COPY pyproject.toml README.md LICENSE ./
 COPY tourganize ./tourganize
 RUN pip install --no-cache-dir -e ".[terminal]"
 
+# Configuration and fixture data are both *data* the application reads at run time, and both
+# are copied after the install so that editing either does not reinstall the package. The
+# fixtures are what makes `tourganize options search` work in the image with no accounts, no
+# keys and no network — D9's whole argument, in one COPY.
 COPY config ./config
+COPY fixtures ./fixtures
 
 USER tourganize
 

@@ -15,7 +15,7 @@ from typing import Final
 from tourganize.application.composition import PENDING_PORTS, Container
 from tourganize.dialogue import DEFAULT_LOCALE, DialogueContext, DialogueState, UserTurn
 from tourganize.domain.catalog import build_agenda
-from tourganize.domain.errors import InvariantViolationError
+from tourganize.domain.errors import InvariantViolationError, UnknownComponentKindError
 from tourganize.domain.invariants import is_aware
 from tourganize.domain.trip import TripPlan
 from tourganize.platform.errors import ConfigurationError, ContractViolationError
@@ -94,6 +94,7 @@ def run_diagnostics(
         _check_component_catalog(container),
         _check_priority_policy(container),
         _check_turn_interpreter(container),
+        _check_option_sources(container),
     ]
     return DoctorReport(
         version=version,
@@ -223,4 +224,44 @@ def _check_turn_interpreter(container: Container) -> CheckResult:
         return CheckResult("turn_interpreter", False, str(exc))
     return CheckResult(
         "turn_interpreter", True, f"{name} read a probe turn as {interpretation.intent.value}"
+    )
+
+
+def _check_option_sources(container: Container) -> CheckResult:
+    """Resolve the Option Sources of every declared Component Kind, and say what they are.
+
+    A real probe rather than a name, for the reason the catalog check is one: this is where a
+    per-kind Source Profile that names a Kind nobody declares, or a profile with nothing wired
+    behind it, becomes visible — before a traveller is greeted rather than after they have
+    answered three questions.
+
+    A fixture tree that holds no data for a Kind is reported and is **not** a failure. The
+    Fixture Provider answers such a query with a deterministic synthetic set on purpose, so that
+    a demonstration never dead-ends; what would be dishonest is not saying so, which is why the
+    count of Kinds with recorded data is in the line.
+    """
+    registry = container.option_sources
+    try:
+        kinds = container.component_catalog.enabled_kinds()
+    except ConfigurationError:
+        # The catalog check above already says why. One line about one broken file is enough.
+        return CheckResult("option_sources", True, "no Component Kinds to source for yet")
+    try:
+        resolved = {kind.kind_key: registry.sources_for(kind.kind_key) for kind in kinds}
+    except UnknownComponentKindError as exc:
+        return CheckResult("option_sources", False, str(exc))
+    profiles = ", ".join(
+        f"{kind_key} -> {registry.profile_for(kind_key)}: "
+        f"{', '.join(source.source_id for source in sources)}"
+        for kind_key, sources in resolved.items()
+    )
+    recorded = sum(
+        1
+        for kind_key, sources in resolved.items()
+        if any(kind_key in source.kind_keys for source in sources)
+    )
+    return CheckResult(
+        "option_sources",
+        True,
+        f"{profiles or 'nothing to source'} ({recorded} of {len(resolved)} with recorded data)",
     )

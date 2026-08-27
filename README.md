@@ -12,32 +12,44 @@ and finally exports a written plan.
 | [docs/roadmap.md](docs/roadmap.md) | The 25 features, their dependency graph and the build order. **Read this first.** |
 | [docs/architecture/overview.md](docs/architecture/overview.md) | Bounded contexts, package layout, ports, the shape of one turn |
 | [docs/architecture/glossary.md](docs/architecture/glossary.md) | The naming authority |
-| [docs/architecture/decisions.md](docs/architecture/decisions.md) | D1–D18: each decision, its cost, and the feature that reverses it |
+| [docs/architecture/decisions.md](docs/architecture/decisions.md) | D1–D19: each decision, its cost, and the feature that reverses it |
 | `tourganize/` | The application |
 | `config/` | Catalog, prompts and messages — data, not code |
+| `fixtures/` | Recorded option data, cassettes and golden conversations — see [fixtures/README.md](fixtures/README.md) |
 | `tests/` | See [tests/README.md](tests/README.md) for the conventions |
 
 ## Status
 
-**F05 has landed: the inert domain is now a conversation.** On top of F01's foundation, F02's Trip
-Plan, F03's Requirement Schemas and F04's Planning Agenda, a **Dialogue Director** drives the whole of
-the behaviour the client described. It resolves every blocking question *before* anything is sourced —
-one question per turn, never a wall of them — presents an Option Slate, accepts a choice **or** a
-refinement and re-plans the same component any number of times, bundles the optional filters alongside
-the first slate and never asks them again, offers to plan the Component Kinds the traveller never
-mentioned once the ones they did are settled, and closes the session on their answer. It contains all
-the control flow and **no wording**: it emits **Assistant Acts** — structured, locale-neutral intents
-to communicate — which F07 will draw and F08/F10 will phrase.
+**F06 has landed: the conversation now shows real options.** On top of F01's foundation, F02's Trip
+Plan, F03's Requirement Schemas, F04's Planning Agenda and F05's **Dialogue Director**, the slates the
+Director presents are built for real. Behind its `OptionSlatePlanner` seam sits a **Planning Service**
+that assembles one Option Query per round, calls the Option Sources registered for that Component Kind
+— serially, each within a time budget — merges and de-duplicates what comes back, marks every option
+with the optional filters it fails, ranks it and truncates to the slate size. The sources are **Fixture
+Providers**: one generic provider reading [`fixtures/options/<kind_key>/*.json`](fixtures/README.md),
+never one class per topic, and per [D9](docs/architecture/decisions.md) they stay the test default
+forever. F17's MCP-backed source and F24's live providers implement the identical port and are finished
+when the same contract suite passes over them.
 
-The state machine is a table, not a pile of `if`s: an undeclared transition raises, no state is
-unreachable, and every turn records one Turn Ledger entry with the states either side of it, the
-intent, the Acts emitted and the Agenda's own explanation of itself. Turns come in through the
-`TurnInterpreter` port, so a deterministic keyword interpreter reading
+Three properties are worth stating. **Sourcing degrades, it never dies:** one source failing is a
+diagnostic and a source skipped, only *every* source failing is an error, and even that becomes an Act
+rather than the end of a conversation. **Optional filters are soft:** a traveller who says "under €150"
+is still shown the €160 room — below the ones under €150, and *marked* — because an empty slate answers
+nothing; `TOURGANIZE_OPTION_FILTER_STRICT=true` is there for an installation that disagrees. **The same
+query yields a byte-identical slate** in any process, which is what F11's replay will rest on.
+
+The Dialogue Director itself did not change: it resolves every blocking question *before* anything is
+sourced — one question per turn — presents an Option Slate, accepts a choice **or** a refinement and
+re-plans the same component any number of times, bundles the optional filters alongside the first slate
+and never asks them again, offers to plan the Component Kinds the traveller never mentioned once the
+ones they did are settled, and closes the session on their answer. It contains all the control flow and
+**no wording**: it emits **Assistant Acts** — structured, locale-neutral intents to communicate — which
+F07 will draw and F08/F10 will phrase. Turns come in through the `TurnInterpreter` port, so a
+deterministic keyword interpreter reading
 [`config/interpretation/keywords.en.yaml`](config/interpretation/keywords.en.yaml) drives it today and
-F08 swaps in a model-backed one with `TOURGANIZE_INTERPRETER`; slates come in through the
-`OptionSlatePlanner` port, which F06 implements for real. There is no surface yet, so the conversation
-is driven from the tests until F07 wires `tourganize chat`. Next is
-[F06](docs/features/F06-option-sourcing-and-fixture-providers.md), option sourcing.
+F08 swaps in a model-backed one with `TOURGANIZE_INTERPRETER`. There is still no surface, so the
+conversation is driven from the tests until F07 wires `tourganize chat`. Next is
+[F07](docs/features/F07-presentation-surface-and-terminal-shell.md), the presentation surface.
 
 ## Getting started
 
@@ -52,6 +64,8 @@ tourganize catalog gaps --kind lodging                      # what is still bloc
 tourganize catalog gaps --kind lodging \
   --set '{"place": "Paris", "date_range": "2026-10-23/2026-10-28"}'   # is_plannable: true
 tourganize catalog agenda --mentioned lodging               # what would be planned next, and why
+tourganize options search --kind lodging \
+  --set '{"place": "Paris", "date_range": "2026-10-23/2026-10-28"}'  # a real Option Slate
 tourganize chat            # exits 2 until F07 implements it — the Director has no surface yet
 ```
 

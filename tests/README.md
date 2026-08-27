@@ -43,6 +43,11 @@ differ from the real adapter's.** Same fields, same errors, same ordering guaran
   config tree. From F03 on, `catalog validate` and `catalog gaps` need both fixtures; `catalog
   show` and `doctor` still need only the catalog. The disabled kind deliberately has no
   schema — a kind nobody can plan does not need one.
+- `option_fixture_dir` — a Fixture Provider tree (`<kind_key>/<name>.json`) for the sample catalog's
+  enabled kinds, with two places, two currencies and review scores spread wide enough that a filter,
+  a ranking and a refinement all visibly do something. A *missing* tree is not a broken installation:
+  the Fixture Provider synthesises rather than dead-ending, so this fixture buys recorded data to
+  assert on.
 - `keyword_files` — the keyword Turn Interpreter's Phrase Tables, in the same config tree. From F05
   on, "a healthy installation" means these too: the `TurnInterpreter` is a wired port, so `doctor`
   probes it by reading a turn, and an installation with no phrases fails that check.

@@ -33,6 +33,7 @@ def test_a_healthy_installation_passes_every_check(
         "component_catalog",
         "priority_policy",
         "turn_interpreter",
+        "option_sources",
     }
     assert "doctor: ok" in report.render()
     assert catalog_file.exists()

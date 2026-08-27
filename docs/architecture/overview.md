@@ -121,7 +121,8 @@ Six contexts. For each: what it owns, and — more importantly — what it is fo
 
 ### 2.4 Option Sourcing
 
-- **Owns:** OptionSource port, Option Query, Fixture Providers, Tool Broker, MCP consumer, Cassettes,
+- **Owns:** OptionSource port, Option Query, the Option Source Registry and Source Profiles, the
+  Planning Service, Option Ranking, Fixture Providers, Tool Broker, MCP consumer, Cassettes,
   Live Providers, normalisation of provider payloads into Plan Options, Feasibility annotation.
 - **Must never know:** the Dialogue state, the traveller's locale beyond passing it through, or how
   options will be presented. It answers "given these requirements, what candidates exist?"
@@ -158,7 +159,9 @@ tourganize/                 # ✔ F01
     trip/                 # ✔ TripPlan, PlanComponent, Selection, PlanCompleteness      (F02)
     requirements/         # ✔ RequirementSchema, FieldSpec, RequirementSet, GapReport   (F03)
     catalog/              # ✔ ComponentKind, invariants, PriorityPolicy, build_agenda (F02/F04)
-    options/              # ✔ PlanOption, OptionSlate, OptionQuery, Money, Provenance   (F02/F06)
+    options/              # ✔ PlanOption, OptionSlate, Money, Provenance                 (F02)
+                          # ✔ query.py: OptionQuery, OptionSourceResult                   (F06)
+                          # ✔ filters.py: optional filters as declared data               (F06)
   dialogue/               # ✔ pure: stdlib + domain + ports only (D17)                  (F05)
     turns.py              # ✔ UserTurn, TurnIntent, TurnInterpretation, AssistantAct    (F05)
     states.py             # ✔ DialogueState and the transition table, as data           (F05)
@@ -170,16 +173,18 @@ tourganize/                 # ✔ F01
     platform.py           # ✔ Clock, TelemetrySink, TelemetryEvent                      (F01)
     catalog.py            # ✔ ComponentCatalog, PriorityPolicy (re-exported)          (F02/F04)
     interpretation.py     # ✔ TurnInterpreter, OptionSlatePlanner (re-exported)         (F05)
+    options.py            # ✔ OptionSource, OptionSourceRegistry, OptionRanking          (F06)
   application/            # ✔ Composition Root and application services
     composition.py        # ✔ build_container: the only place adapters are constructed  (F01)
     diagnostics.py        # ✔ what `tourganize doctor` reports                          (F01)
+    planning_service.py   # ✔ the real OptionSlatePlanner, over OptionSource             (F06)
   language/               # ✔ PromptLibrary, locale detection, MessageCatalogue, bidi   (F08/F10)
   adapters/
     catalog/              # ✔ yaml/ (catalog + schemas), memory/, priority/             (F02-F04)
     clock/                # ✔ system/, fake/                                            (F01)
     telemetry/            # ✔ jsonl/, null/                                             (F01)
     interpretation/       # ✔ keyword/ (the deterministic stand-in F08 replaces)         (F05)
-    options/              # ✔ fake/ ✔, fixture/, world/, live/                     (F05, F06, F17, F24)
+    options/              # ✔ fake/, fixture/, registry, ranking; world/, live/    (F05, F06, F17, F24)
     presentation/         # ✔ terminal/, scripted/, web/                                (F07, F25)
     llm/                  #   fake/, claude_code/, hosted/                              (F08, F09, F21)
     knowledge/            #   ingestion/, vector/, tuned/                               (F18, F19, F23)
@@ -187,7 +192,7 @@ tourganize/                 # ✔ F01
     export/               #   text/, typeset/                                           (F13, F14)
     persistence/          #   memory/, sqlite/                                          (F12)
   platform/               # ✔ Settings, secrets, logging setup, errors, config reader
-  cli.py                  # ✔ doctor, catalog show|validate|gaps|agenda, stubs for the rest
+  cli.py                  # ✔ doctor, catalog show|validate|gaps|agenda, options search
 services/
   model_service/          # own container: HTTP façade + Inference Engine (F20)
   mcp_feasibility/        # own container: local FastMCP service (F16)
@@ -198,8 +203,8 @@ config/                   # ✔ directory exists; contents arrive with the featu
   interpretation/         # ✔ keywords.<locale>.yaml: the keyword Phrase Tables  (F05)
   prompts/<version>/      # versioned Prompt Templates                            (F08)
   messages/<locale>.yaml  # Message Catalogue                                     (F10)
-fixtures/
-  options/                # Fixture Provider data                                 (F06)
+fixtures/                 # ✔ see fixtures/README.md for the file format
+  options/                # ✔ Fixture Provider data, one directory per kind_key   (F06)
   cassettes/              # recorded Tool Calls                                   (F15)
   conversations/          # Golden Conversations                                  (F11)
 docker/                   # ✔ Dockerfiles, compose profiles: dev-cpu ✔, mcp (F16), gpu (F20)
@@ -207,7 +212,7 @@ tests/                    # ✔ see tests/README.md for the conventions
   unit/ integration/ contracts/ conversations/ architecture/
 ```
 
-**✔ marks what exists today** (after F05); an unmarked directory is created by the feature
+**✔ marks what exists today** (after F06); an unmarked directory is created by the feature
 named beside it, which also fills a marked-but-empty package. F01 created the adapter
 sub-packages up to F07 and no further, so the near shape is visible without inventing folders
 for features nobody has started — an empty package is documentation, not code, and beyond F07
@@ -227,12 +232,24 @@ class LlmGateway(Protocol):
     def capabilities(self) -> GatewayCapabilities: ...
 
 # tourganize/ports/options.py                                   introduced by F06
+#   OptionQuery and OptionSourceResult are defined in tourganize/domain/options/query.py
+#   and re-exported here, for the reason D15 and D17 already record twice
 class OptionSource(Protocol):
     @property
     def source_id(self) -> str: ...
     @property
     def kind_keys(self) -> frozenset[str]: ...
     def search(self, query: OptionQuery) -> OptionSourceResult: ...
+
+class OptionSourceRegistry(Protocol):
+    def sources_for(self, kind_key: str) -> tuple[OptionSource, ...]: ...
+    def profile_for(self, kind_key: str) -> str: ...
+
+class OptionRanking(Protocol):                        # never adds, removes or edits an option
+    @property
+    def ranking_id(self) -> str: ...
+    def order(self, options: Sequence[PlanOption],
+              query: OptionQuery) -> Sequence[PlanOption]: ...
 
 # tourganize/ports/tools.py                                     introduced by F15
 class ToolBroker(Protocol):
@@ -338,6 +355,14 @@ being taken. Blocking gaps are resolved before anything is sourced, one question
 filters ride along with the *first* slate and are never re-asked; and every turn records exactly one
 Turn Ledger entry with the states either side of it, the intent, the Acts emitted and the Agenda's own
 explanation of itself.
+
+Behind the `OptionSlatePlanner` seam, the **Planning Service** builds one Option Query, calls the
+Option Sources the registry names for that Component Kind **serially** (D5 forbids assuming
+parallel fan-out anywhere), merges and de-duplicates, marks every option with the optional filters
+it fails, ranks and truncates to `TOURGANIZE_SLATE_SIZE`. One source failing is a Diagnostic on the
+slate and a source skipped; *every* source failing is `OptionSourcingError`, which the Director
+turns into `report_sourcing_failure` — a conversation must not end because a provider did. An empty
+slate is not an exception at all: it is an answer, and F05 already has an Act for it.
 
 The Choose-or-Refine Loop is the branch on the *next* turn: intent `choose_option` records a Selection
 and pops the Agenda; intent `refine` merges new Requirement Values and re-enters sourcing for the

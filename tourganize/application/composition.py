@@ -14,8 +14,6 @@ the boundary rather than in a constructor argument nobody could type.
 Slots the roadmap will add here, with the feature that owns each:
 
 ===========================  =========================================
-``option_slate_planner``     F06  ``OptionSlatePlanner`` (F05 ships the fake behind it)
-``option_sources``           F06  ``OptionSource`` (one per Component Kind profile)
 ``presentation_surface``     F07  ``PresentationSurface``
 ``llm_gateway``              F08  ``LlmGateway``
 ``language_detector``        F10  ``LanguageDetector``
@@ -37,26 +35,35 @@ from tourganize.adapters.catalog.priority import FixedOrderPolicy, WeightedCatal
 from tourganize.adapters.catalog.yaml import YamlComponentCatalog
 from tourganize.adapters.clock.system import SystemClock
 from tourganize.adapters.interpretation.keyword import KeywordTurnInterpreter
+from tourganize.adapters.options import CheapestFirstRanking, SourceRegistry
+from tourganize.adapters.options.fixture import FixtureOptionSource
 from tourganize.adapters.telemetry.jsonl import JsonlTelemetrySink
 from tourganize.adapters.telemetry.null import NullTelemetrySink
+from tourganize.application.planning_service import PlanningService
 from tourganize.dialogue import DialogueSettings
 from tourganize.platform.errors import ConfigurationError
-from tourganize.platform.settings import Settings, default_telemetry_path
+from tourganize.platform.settings import (
+    Settings,
+    SourceProfileName,
+    default_telemetry_path,
+)
 from tourganize.ports.catalog import ComponentCatalog, PriorityPolicy
-from tourganize.ports.interpretation import TurnInterpreter
+from tourganize.ports.interpretation import OptionSlatePlanner, TurnInterpreter
+from tourganize.ports.options import OptionRanking, OptionSource, OptionSourceRegistry
 from tourganize.ports.platform import Clock, TelemetrySink
 
 __all__ = ["Container", "build_container", "build_dialogue_settings"]
 
+#: Which feature delivers each Source Profile this release cannot build. ``fixture`` is absent
+#: because it is the one that is wired; the rest are refused by name, naming the feature.
+_SOURCE_PROFILE_FEATURES: Final[MappingProxyType[str, str]] = MappingProxyType(
+    {"world": "F17", "live": "F24"}
+)
+
 #: Ports with no adapter in the Container yet, and the feature that wires one. ``doctor``
-#: prints this so the surface of what is not yet built stays visible. Most are ports a later
-#: feature also *introduces*; ``OptionSlatePlanner`` is not — F05 declares that protocol and
-#: ships a fake for tests, and it is listed here because the real planning service over
-#: ``OptionSource`` is F06's.
+#: prints this so the surface of what is not yet built stays visible.
 PENDING_PORTS: Final[MappingProxyType[str, str]] = MappingProxyType(
     {
-        "OptionSlatePlanner": "F06",
-        "OptionSource": "F06",
         "PresentationSurface": "F07",
         "LlmGateway": "F08",
         "LanguageDetector": "F10",
@@ -79,6 +86,9 @@ class Container:
     component_catalog: ComponentCatalog
     priority_policy: PriorityPolicy
     turn_interpreter: TurnInterpreter
+    option_sources: OptionSourceRegistry
+    option_ranking: OptionRanking
+    option_slate_planner: OptionSlatePlanner
 
     def adapters(self) -> MappingProxyType[str, str]:
         """Return ``port name -> adapter class name``, for ``doctor`` and telemetry."""
@@ -89,24 +99,44 @@ class Container:
                 "ComponentCatalog": type(self.component_catalog).__name__,
                 "PriorityPolicy": type(self.priority_policy).__name__,
                 "TurnInterpreter": type(self.turn_interpreter).__name__,
+                "OptionSourceRegistry": type(self.option_sources).__name__,
+                "OptionRanking": type(self.option_ranking).__name__,
+                "OptionSlatePlanner": type(self.option_slate_planner).__name__,
             }
         )
 
 
 def build_container(settings: Settings) -> Container:
     """Select and construct every adapter named by ``settings``."""
+    clock = SystemClock()
+    telemetry_sink = _build_telemetry_sink(settings)
+    # Constructing the catalog does not read the file: a broken catalog has to be a failing
+    # `doctor` check, not an exception thrown while the container is being wired. The same
+    # laziness covers the Requirement Schemas it resolves ``schema_key`` against, the phrase
+    # tables the interpreter reads on the first turn, and the fixture tree the Option Sources
+    # read on the first query.
+    component_catalog = YamlComponentCatalog(settings.catalog_path, settings.schema_dir)
+    option_sources = _build_option_sources(settings, clock)
+    option_ranking = CheapestFirstRanking()
     return Container(
         settings=settings,
-        clock=SystemClock(),
-        telemetry_sink=_build_telemetry_sink(settings),
-        # Constructing the catalog does not read the file: a broken catalog has to be a
-        # failing `doctor` check, not an exception thrown while the container is being wired.
-        # The same laziness covers the Requirement Schemas it resolves ``schema_key`` against.
-        component_catalog=YamlComponentCatalog(settings.catalog_path, settings.schema_dir),
+        clock=clock,
+        telemetry_sink=telemetry_sink,
+        component_catalog=component_catalog,
         priority_policy=_build_priority_policy(settings),
-        # Lazily too: the phrase tables are read on the first turn, so a missing
-        # `config/interpretation/` is a failing `doctor` check rather than an unwireable app.
         turn_interpreter=_build_turn_interpreter(settings),
+        option_sources=option_sources,
+        option_ranking=option_ranking,
+        option_slate_planner=PlanningService(
+            component_catalog,
+            option_sources,
+            option_ranking,
+            clock,
+            telemetry_sink,
+            slate_size=settings.slate_size,
+            filter_strict=settings.option_filter_strict,
+            timeout_seconds=settings.option_source_timeout_seconds,
+        ),
     )
 
 
@@ -138,6 +168,34 @@ def _build_turn_interpreter(settings: Settings) -> TurnInterpreter:
             "Library); set TOURGANIZE_INTERPRETER=keyword until then"
         )
     return KeywordTurnInterpreter(settings.keyword_config_dir)
+
+
+def _build_option_sources(settings: Settings, clock: Clock) -> SourceRegistry:
+    """Wire the Option Sources of every Source Profile ``TOURGANIZE_OPTION_SOURCE_PROFILE`` names.
+
+    ``world`` and ``live`` are documented values of that key and F17 and F24 are the features
+    that build them, so asking for one is refused *by name* here — the same bargain
+    ``TOURGANIZE_INTERPRETER=model`` makes. Refusing at wiring time rather than at the first
+    query is deliberate: a demonstration that greets a traveller and then cannot source anything
+    is worse than one that will not start.
+
+    Only the profiles actually named are built, so a fixture-only installation never constructs
+    a client for a provider it has no account with.
+    """
+    profile = settings.option_source_profile
+    unavailable = {
+        name: _SOURCE_PROFILE_FEATURES[name] for name in profile.names if name != "fixture"
+    }
+    if unavailable:
+        named = ", ".join(f"{name} ({feature})" for name, feature in sorted(unavailable.items()))
+        raise ConfigurationError(
+            f"TOURGANIZE_OPTION_SOURCE_PROFILE={profile.describe()} asks for {named}; set every "
+            f"Component Kind to the fixture profile until then"
+        )
+    sources: dict[SourceProfileName, tuple[OptionSource, ...]] = {
+        "fixture": (FixtureOptionSource(settings.fixture_dir, clock),)
+    }
+    return SourceRegistry(profile, sources)
 
 
 def _build_priority_policy(settings: Settings) -> PriorityPolicy:
