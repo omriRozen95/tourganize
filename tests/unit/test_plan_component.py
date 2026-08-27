@@ -142,6 +142,42 @@ def test_a_failed_component_may_be_sourced_again() -> None:
     assert item.status is S.SOURCING
 
 
+def test_a_new_component_has_no_failures_behind_it() -> None:
+    assert component().consecutive_failures == 0
+
+
+def test_failures_are_counted_as_they_happen() -> None:
+    """The count F04's Agenda reads to skip a Kind that cannot be sourced at all."""
+    item = component()
+
+    item.advance_to(S.FAILED)
+    item.advance_to(S.SOURCING)
+    item.advance_to(S.FAILED)
+
+    assert item.consecutive_failures == 2
+
+
+def test_a_slate_that_finally_arrives_clears_the_run() -> None:
+    """ "Consecutive" means consecutive: two failures a week ago are no reason to stop trying."""
+    item = component()
+    item.advance_to(S.FAILED)
+    item.advance_to(S.SOURCING)
+
+    item.advance_to(S.AWAITING_CHOICE)
+
+    assert item.consecutive_failures == 0
+
+
+def test_retrying_alone_does_not_clear_the_run() -> None:
+    """An attempt has proved nothing yet, so a Kind that fails every time is still skipped."""
+    item = component()
+    item.advance_to(S.FAILED)
+
+    item.advance_to(S.SOURCING)
+
+    assert item.consecutive_failures == 1
+
+
 def test_a_settled_choice_may_be_reopened_by_refinement() -> None:
     item = component(S.SELECTED)
 

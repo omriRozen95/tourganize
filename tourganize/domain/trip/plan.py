@@ -1,9 +1,10 @@
 """``TripPlan`` — the aggregate root, and the only place a plan may be changed.
 
-Every mutation goes through one of five named methods. That is the whole point: the dialogue
-(F05) decides *when* to plan something, and this type decides what a plan is allowed to
-become. A slate cannot be recorded for a component nobody sourced, a Selection cannot name an
-option that was never offered, and refinement history is never thrown away.
+Every mutation goes through one of six named methods, and nothing outside this module walks a
+Component Status edge. That is the whole point: the dialogue (F05) decides *when* to plan
+something, and this type decides what a plan is allowed to become. A slate cannot be recorded
+for a component nobody sourced, a Selection cannot name an option that was never offered, and
+refinement history is never thrown away.
 
 ``created_at`` is passed in rather than read here — the domain has no clock, so the caller
 hands it ``clock.now()`` and a replayed conversation keeps the timestamps it was recorded
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Final
 
 from tourganize.domain.errors import (
     InvariantViolationError,
@@ -31,6 +33,16 @@ from tourganize.domain.trip.component import ComponentStatus, PlanComponent
 from tourganize.domain.trip.selection import Selection
 
 __all__ = ["TripPlan"]
+
+#: The Component Status edges a component walks to reach ``SELECTED``. Spelled out rather than
+#: assigned, because :data:`~tourganize.domain.trip.component.LEGAL_TRANSITIONS` is what says
+#: they are legal and :meth:`TripPlan.mark_selected` is the only thing that walks them all.
+_TO_SELECTED: Final = (
+    ComponentStatus.READY,
+    ComponentStatus.SOURCING,
+    ComponentStatus.AWAITING_CHOICE,
+    ComponentStatus.SELECTED,
+)
 
 
 @dataclass
@@ -170,6 +182,30 @@ class TripPlan:
             )
         component.advance_to(ComponentStatus.SELECTED)
         component.selection = selection
+
+    def mark_selected(self, kind_key: str) -> None:
+        """Record that ``kind_key`` is already chosen, with no Selection to record.
+
+        For *describing* a plan this conversation did not build. ``tourganize catalog agenda``
+        names on the command line what is already settled, and there it has no Option Source,
+        no Option Slate and therefore no Plan Option that a Selection could honestly name. It
+        walks the same Component Status edges sourcing and a choice would, so the recorded
+        history stays legal, and it lives here rather than in the caller so that "``SELECTED``
+        with no Selection" is a state this aggregate produces deliberately, in one place,
+        instead of one that anything outside the domain can assemble for itself.
+
+        A component that has been offered something is refused: once a slate exists there is a
+        Plan Option to name, and :meth:`record_selection` is the method that names it. That is
+        also why the dialogue never wants this one.
+        """
+        component = self.ensure_component(kind_key)
+        if component.slates:
+            raise InvariantViolationError(
+                f"{kind_key}: {component.round_count} Option Slate(s) have been offered, so "
+                f"record_selection is what records the choice — it names the Plan Option"
+            )
+        for status in _TO_SELECTED:
+            component.advance_to(status)
 
     def decline(self, kind_key: str) -> None:
         """Mark a Component Kind as declined. It is never offered again in this session."""

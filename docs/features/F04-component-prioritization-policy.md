@@ -34,6 +34,11 @@ From F02/F03: `ComponentKind` with `priority_weight` and `requires_outcome_of`; 
    - partition open (non-settled, non-declined, enabled) kinds into `MENTIONED`
      (`component.mentioned_on_turn is not None`) and `UNMENTIONED`;
    - order **within** each band by the injected `PriorityPolicy`;
+   - then apply the declared Outcome Dependencies to that order, as the soft constraint item 3
+     describes, so that the ordering and the `blocked_by` label are produced from one answer and
+     cannot disagree. The policy's order is preserved verbatim wherever the declarations do not
+     contradict it. This lives here rather than in the policy for the reason Mentioned-First does — a
+     replacement policy must be *unable* to break it — and is [D16](../architecture/decisions.md);
    - concatenate `MENTIONED` then `UNMENTIONED` — **never** interleaved. This concatenation is the
      Mentioned-First Rule and is not configurable. A single unit test named
      `test_mentioned_first_is_not_overridable_by_weight` pins it: a mentioned kind with weight 1 must
@@ -42,21 +47,26 @@ From F02/F03: `ComponentKind` with `priority_weight` and `requires_outcome_of`; 
    `WeightedCatalogPolicy`:
    - sort by descending `priority_weight`, tie-broken by catalog declaration order (stable, so the
      agenda never flickers between turns);
-   - apply **Outcome Dependencies as a soft constraint**: if kind B declares
+   - **Outcome Dependencies are a soft constraint**: if kind B declares
      `requires_outcome_of: [A]` and A is *also open in the same band*, B ranks after A and records
      `blocked_by=("A",)` with `reason_code="awaits_outcome"`. If A is settled, declined, or in a
      different band, B is unconstrained — a traveller who only wants a hotel must never be blocked
-     waiting for flights they did not ask for. A second test pins exactly that case.
-   - break dependency cycles defensively by declaration order and emit one WARNING (the catalog
-     validator in F02 should already have rejected them).
+     waiting for flights they did not ask for. A second test pins exactly that case. The rule is
+     *applied* by `build_agenda` (item 2, D16), so a policy that never reads `requires_outcome_of`
+     is still a correct policy; a policy may prefer dependency order, and the shipped one does.
+   - break dependency cycles defensively by declaration order and emit one WARNING, in whichever of
+     the two places is ordering (the catalog validator in F02 should already have rejected them).
 4. **Actionability** — `next_actionable(plan, catalog, policy, analyse)` returns the first entry whose
    component is either not yet Plannable (so the dialogue elicits) or Plannable (so the dialogue
    sources). A `FAILED` component is skipped after `TOURGANIZE_AGENDA_FAILURE_SKIP` consecutive
    failures so one broken kind cannot deadlock the conversation.
 5. **Explainability** — `PlanningAgenda.explain()` returning per-entry `(kind_key, band, rank,
    reason_code)`. F05 uses it for telemetry and F11 asserts on it; the traveller never sees it.
-6. **CLI** — `tourganize catalog agenda [--mentioned k1,k2] [--settled k3] [--declined k4]` printing the
-   agenda table with bands, ranks and reason codes.
+6. **CLI** — `tourganize catalog agenda [--mentioned k1,k2] [--selected k3] [--declined k4]` printing
+   the agenda table with bands, ranks and reason codes. The flag reads `--selected`, not `--settled`:
+   the glossary and `SETTLED_STATUSES` use *settled* for selected **or** declined, and this command
+   already has a separate `--declined`. The glossary outranks this file on naming, so the spelling here
+   was corrected rather than the code.
 
 ## Contract (the Lego connectors)
 
@@ -86,6 +96,44 @@ class PriorityPolicy(Protocol):
     def order(self, candidates: Sequence[ComponentKind], plan: TripPlan) -> Sequence[str]: ...
 ```
 
+Five places where the shipped code says something different from this file. They are not one kind of
+thing, so each is labelled: **forced** means a rule that outranks this file left no choice,
+**spec-authorised** means this file's own Open questions allow it, and **implementer's choice** means
+it is a judgement that could have gone the other way and is defended here on its merits.
+
+- *(forced)* `build_agenda(plan, kinds, policy, *, plannable=None, failure_skip=...)` takes the
+  **declared Component Kinds** rather than a `ComponentCatalog`, and `PriorityPolicy` is *defined* in
+  `domain/catalog/prioritization.py` and re-exported by `ports/catalog.py`. The domain may import
+  nothing outside itself — `tourganize.ports` included — and `build_agenda` is a domain function, so a
+  port-typed parameter is not available to it. This is the same move F02 made for `TourganizeError`,
+  and `from tourganize.ports.catalog import PriorityPolicy` still works. `ContractViolationError`
+  moves for the same reason and keeps its documented import path.
+- *(spec-authorised)* `next_actionable()` is the no-argument method of the Contract block, not the
+  four-argument function of Scope item 4. Plannability reaches `build_agenda` as the precomputed map
+  the Open questions explicitly prefer, and becomes the `not_plannable` reason code; the reason codes
+  are the whole of what actionability means, so there is one place to read it from.
+- *(implementer's choice)* The run of failures a skip counts lives on
+  `PlanComponent.consecutive_failures`, incremented by `advance_to` and cleared when a slate finally
+  arrives. Scope item 4 names the threshold but not where the count lives. `advance_to` is the only
+  thing that sees every transition, so it is the only thing that could count a *run* rather than a
+  total, and F12 then persists it with the plan for free. The alternative — counting in the Dialogue
+  Director — would have kept F02's aggregate untouched at the price of a count that resets whenever a
+  session is reloaded.
+- *(implementer's choice)* `FixedOrderPolicy(kind_keys, *, verbatim=False)` has one extra mode, and it
+  resolves a tension internal to this file rather than obeying anything outside it: the Errors section
+  requires the seam to refuse a policy that invents or drops a `kind_key`, while the config table makes
+  `fixed` a production value that must therefore be total. Configured normally it is total — a
+  permutation of whatever candidates it is handed — and that is what the contract suite runs.
+  `verbatim=True` returns its list unchanged so a test can drive the refusals; nothing in production
+  sets it. A second throwaway fake in the test tree was the alternative, and would have left the
+  shipped fake untested against the seam it exists to exercise.
+- *(implementer's choice, [D16](../architecture/decisions.md))* The within-band Outcome Dependency
+  ordering of Scope item 3 is applied by `build_agenda`, not by the policy — see the amended items 2
+  and 3 above. Leaving it in the policy made the two halves of one sentence separable, and they came
+  apart: `fixed` reads no `requires_outcome_of`, so an entry could rank first and still be labelled
+  `awaits_outcome` for a Kind ranked after it. Refusing such a policy at the seam was the alternative
+  and would have made a documented config value unusable.
+
 **Ports consumed:** `ComponentCatalog`.
 
 **Ports provided:** `PriorityPolicy`, with `WeightedCatalogPolicy` (default) and
@@ -112,12 +160,16 @@ importance (an explicit non-goal of the shipped policy; see D3's reversal path).
 ## Replaceability notes
 
 **Must be preserved:** the Mentioned-First concatenation, which lives in `build_agenda`, **not** in the
-policy — a replacement policy must be unable to violate it. The `PlanningAgenda` /`AgendaEntry` shape,
-`next_actionable()`, `is_mentioned_band_empty()`, and the rule that Outcome Dependencies are soft.
+policy — a replacement policy must be unable to violate it. The same is true of the within-band Outcome
+Dependency ordering (D16): an Agenda entry may never be labelled `awaits_outcome` while ranking ahead
+of the blocker it names. The `PlanningAgenda` /`AgendaEntry` shape, `next_actionable()`,
+`is_mentioned_band_empty()`, and the rule that Outcome Dependencies are soft.
 
 **Free to change:** everything inside `PriorityPolicy.order` — weights, an LLM-scored policy, a
-learned policy, seasonality. The `reason_code` vocabulary may grow (consumers must treat unknown codes
-as opaque). The stability tie-break may change as long as it stays deterministic.
+learned policy, seasonality — with one thing a policy author must know: a declared Outcome Dependency
+will move their answer, because `build_agenda` applies it afterwards. The `reason_code` vocabulary may
+grow (consumers must treat unknown codes as opaque). The stability tie-break may change as long as it
+stays deterministic.
 
 ## Definition of done
 
@@ -129,6 +181,11 @@ as opaque). The stability tie-break may change as long as it stays deterministic
       unmentioned, `lodging` is actionable immediately and is **not** marked `awaits_outcome`.
 - [ ] `test_outcome_dependency_orders_within_band` passes: with both `air_travel` and `lodging`
       mentioned, `air_travel` ranks first and `lodging` carries `blocked_by=("air_travel",)`.
+- [ ] No Agenda entry is ever labelled `awaits_outcome` while ranking ahead of the blocker it names —
+      for **every** policy, including `fixed`, which reads no `requires_outcome_of`, and including a
+      test policy written to reverse dependency order. Pinned by
+      `test_no_policy_can_make_the_order_and_the_labels_disagree` and by the parametrised
+      `test_the_order_and_the_blocked_by_labels_never_disagree` in the contract suite.
 - [ ] The agenda is stable: building it twice from the same plan yields identical entries, and settling
       one component does not reorder the remainder (test with three kinds).
 - [ ] `is_mentioned_band_empty()` is true exactly when no mentioned kind is open — tested including the

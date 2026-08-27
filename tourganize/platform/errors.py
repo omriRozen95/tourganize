@@ -6,14 +6,17 @@ features derive their own exceptions from one of the classes here, never from ba
 ``Exception``.
 
 :class:`TourganizeError` itself is defined in :mod:`tourganize.domain.errors` and re-exported
-here. The domain may import nothing but the standard library and itself, so the root has to
-live where the domain can reach it; this module stays the one place to read the hierarchy
-from, and the documented import path is unchanged.
+here, as is :class:`ContractViolationError`. The domain may import nothing but the standard
+library and itself, so an error the domain raises has to live where the domain can reach it —
+the root because everything inherits from it, and the contract violation because F04's
+Planning Agenda checks a replaceable ``PriorityPolicy``'s output inside the domain. This
+module stays the one place to read the hierarchy from, and both documented import paths are
+unchanged.
 """
 
 from __future__ import annotations
 
-from tourganize.domain.errors import TourganizeError
+from tourganize.domain.errors import ContractViolationError, TourganizeError
 
 __all__ = [
     "CatalogError",
@@ -35,10 +38,6 @@ class ConfigurationError(TourganizeError):
 
 class PortUnavailableError(TourganizeError):
     """A port has no adapter wired, or its adapter cannot be reached."""
-
-
-class ContractViolationError(TourganizeError):
-    """Data crossing a port boundary did not satisfy the declared contract."""
 
 
 class CatalogError(ConfigurationError):

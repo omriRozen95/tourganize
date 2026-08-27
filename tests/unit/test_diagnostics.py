@@ -5,11 +5,13 @@ from __future__ import annotations
 import os
 import stat
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from conftest import write_catalog
 
+from tourganize.adapters.catalog.priority import FixedOrderPolicy
 from tourganize.application.composition import build_container
 from tourganize.application.diagnostics import run_diagnostics
 from tourganize.platform.settings import Settings
@@ -29,6 +31,7 @@ def test_a_healthy_installation_passes_every_check(
         "clock",
         "telemetry_sink",
         "component_catalog",
+        "priority_policy",
     }
     assert "doctor: ok" in report.render()
     assert catalog_file.exists()
@@ -143,6 +146,80 @@ def test_the_catalog_check_counts_declared_and_enabled_kinds(
     assert catalog.ok
     assert catalog.detail.startswith("3 Component Kinds (2 enabled)")
     assert str(catalog_file) in catalog.detail
+
+
+def test_the_priority_policy_check_reports_the_order_it_would_plan_in(
+    settings_factory: SettingsFactory, catalog_file: Path
+) -> None:
+    """A real probe: the Agenda is built, so a policy that misbehaves fails here, not mid-turn."""
+    report = run_diagnostics(build_container(settings_factory()), version="9.9.9")
+
+    policy = next(check for check in report.checks if check.name == "priority_policy")
+    assert policy.ok
+    assert "WeightedCatalogPolicy (weighted)" in policy.detail
+    # The catalog fixture declares alpha (300) and beta (200); gamma is disabled.
+    assert policy.detail.endswith("would plan alpha, beta")
+    assert catalog_file.exists()
+
+
+def test_the_configured_policy_is_the_one_doctor_probes(
+    settings_factory: SettingsFactory, catalog_file: Path
+) -> None:
+    settings = settings_factory(TOURGANIZE_PRIORITY_POLICY="fixed")
+
+    report = run_diagnostics(build_container(settings), version="9.9.9")
+
+    policy = next(check for check in report.checks if check.name == "priority_policy")
+    assert "FixedOrderPolicy (fixed)" in policy.detail
+    assert report.adapters["PriorityPolicy"] == "FixedOrderPolicy"
+    assert catalog_file.exists()
+
+
+def test_the_probe_uses_the_resolved_agenda_failure_skip(
+    settings_factory: SettingsFactory, catalog_file: Path
+) -> None:
+    """The probe is built the way a turn will be, ``failure_skip`` included, so an impossible
+    value is a failing check rather than an exception out of a health report. ``Settings`` will
+    not resolve one, which is why the test has to write it in by hand."""
+    container = build_container(settings_factory())
+    impossible = replace(container, settings=replace(container.settings, agenda_failure_skip=0))
+
+    report = run_diagnostics(impossible, version="9.9.9")
+
+    policy = next(check for check in report.checks if check.name == "priority_policy")
+    assert not policy.ok
+    assert "failure_skip must be at least 1" in policy.detail
+    assert catalog_file.exists()
+
+
+def test_a_policy_that_breaks_its_contract_fails_doctor(
+    settings_factory: SettingsFactory, catalog_file: Path
+) -> None:
+    """The reason the check is a real probe: a replacement policy is found out here, before a
+    conversation starts, rather than halfway through one."""
+    container = build_container(settings_factory())
+    broken = replace(container, priority_policy=FixedOrderPolicy(("nowhere",), verbatim=True))
+
+    report = run_diagnostics(broken, version="9.9.9")
+
+    policy = next(check for check in report.checks if check.name == "priority_policy")
+    assert not policy.ok
+    assert "nowhere" in policy.detail
+    assert not report.ok
+    assert catalog_file.exists()
+
+
+def test_a_catalog_that_cannot_be_loaded_is_not_reported_twice(
+    settings_factory: SettingsFactory,
+) -> None:
+    """The catalog check already says what is wrong; the policy has nothing to order, not a
+    second opinion about the file."""
+    report = run_diagnostics(build_container(settings_factory()), version="9.9.9")
+
+    policy = next(check for check in report.checks if check.name == "priority_policy")
+    assert policy.ok
+    assert policy.detail.endswith("nothing to order yet")
+    assert not report.ok  # the catalog check still fails, so doctor still fails
 
 
 def test_no_secret_value_appears_in_the_rendered_report(

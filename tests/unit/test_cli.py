@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import itertools
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -17,7 +18,6 @@ from tourganize.cli import (
     EXIT_NOT_IMPLEMENTED,
     EXIT_OK,
     EXIT_USAGE_ERROR,
-    PLANNED_CATALOG_COMMANDS,
     PLANNED_COMMANDS,
     main,
 )
@@ -72,18 +72,18 @@ def test_chat_names_f07() -> None:
     assert "F07" in err
 
 
-@pytest.mark.parametrize("action", sorted(PLANNED_CATALOG_COMMANDS))
-def test_every_planned_catalog_action_exits_2_naming_its_feature(
+@pytest.mark.parametrize("action", CATALOG_ACTIONS)
+def test_every_catalog_action_runs_rather_than_naming_a_feature(
     action: str, tmp_path: Path
 ) -> None:
-    feature, _summary = PLANNED_CATALOG_COMMANDS[action]
+    """F04 implemented `agenda`, the last `catalog` action that was still a stub. A stub exits 2
+    and names the feature that will implement it; none of these do."""
+    code, _out, err = _run(
+        ["catalog", action, *(["--kind", "alpha"] if action == "gaps" else [])], _environ(tmp_path)
+    )
 
-    code, out, err = _run(["catalog", action], _environ(tmp_path))
-
-    assert code == EXIT_NOT_IMPLEMENTED
-    assert feature in err
-    assert action in err
-    assert out == ""
+    assert code == EXIT_OK
+    assert "not implemented" not in err
 
 
 def test_catalog_show_lists_the_declared_kinds(tmp_path: Path) -> None:
@@ -352,6 +352,121 @@ def test_the_schema_directory_can_be_moved_on_its_own(tmp_path: Path) -> None:
     assert "is_plannable: false" in out
 
 
+def _agenda_rows(out: str) -> list[list[str]]:
+    """The agenda table's rows, split into cells: the lines between the rule and the blank."""
+    lines = out.splitlines()
+    rule = next(index for index, line in enumerate(lines) if line and set(line) <= {"-", " "})
+    return [line.split() for line in itertools.takewhile(bool, lines[rule + 1 :])]
+
+
+def test_catalog_agenda_puts_a_mentioned_kind_first_whatever_its_weight(tmp_path: Path) -> None:
+    """`beta` is the lighter of the two enabled Kinds in the fixture catalog."""
+    code, out, err = _run(["catalog", "agenda", "--mentioned", "beta"], _environ(tmp_path))
+
+    assert code == EXIT_OK
+    assert err == ""
+    assert _agenda_rows(out)[:2] == [
+        ["beta", "MENTIONED", "0", "-", "not_plannable"],
+        ["alpha", "UNMENTIONED", "0", "-", "not_plannable"],
+    ]
+    assert "next_actionable: beta" in out
+    assert "mentioned_band_empty: false" in out
+
+
+def test_catalog_agenda_orders_an_unmentioned_band_by_weight(tmp_path: Path) -> None:
+    code, out, _err = _run(["catalog", "agenda"], _environ(tmp_path))
+
+    assert code == EXIT_OK
+    assert [row[0] for row in _agenda_rows(out)] == ["alpha", "beta"]
+    assert "mentioned_band_empty: true" in out
+
+
+def test_catalog_agenda_reports_an_outcome_dependency_inside_a_band(tmp_path: Path) -> None:
+    """`beta` awaits `alpha` in the fixture catalog, and both are mentioned here."""
+    code, out, _err = _run(["catalog", "agenda", "--mentioned", "beta,alpha"], _environ(tmp_path))
+
+    assert code == EXIT_OK
+    assert _agenda_rows(out) == [
+        ["alpha", "MENTIONED", "0", "-", "not_plannable"],
+        ["beta", "MENTIONED", "1", "alpha", "awaits_outcome"],
+    ]
+    assert "next_actionable: alpha" in out
+
+
+def test_catalog_agenda_drops_what_is_selected_and_what_was_declined(tmp_path: Path) -> None:
+    code, out, _err = _run(
+        ["catalog", "agenda", "--mentioned", "alpha", "--selected", "alpha", "--declined", "beta"],
+        _environ(tmp_path),
+    )
+
+    assert code == EXIT_OK
+    assert _agenda_rows(out) == []  # nothing left to plan: an empty agenda is a valid answer
+    assert "next_actionable: none" in out
+    assert "mentioned_band_empty: true" in out
+
+
+def test_catalog_agenda_never_plans_a_disabled_kind(tmp_path: Path) -> None:
+    """`gamma` is declared and disabled, so it is not on the agenda and cannot be named."""
+    code, out, _err = _run(["catalog", "agenda"], _environ(tmp_path))
+    refused, _out, err = _run(["catalog", "agenda", "--mentioned", "gamma"], _environ(tmp_path))
+
+    assert code == EXIT_OK
+    assert "gamma" not in out
+    assert refused == EXIT_USAGE_ERROR
+    assert "disabled" in err
+
+
+def test_catalog_agenda_names_the_policy_that_produced_it(tmp_path: Path) -> None:
+    weighted = _run(["catalog", "agenda"], _environ(tmp_path))
+    fixed = _run(["catalog", "agenda"], _environ(tmp_path, TOURGANIZE_PRIORITY_POLICY="fixed"))
+
+    assert "(policy weighted)" in weighted[1]
+    assert "(policy fixed)" in fixed[1]
+
+
+def test_catalog_agenda_refuses_an_unknown_kind(tmp_path: Path) -> None:
+    code, out, err = _run(["catalog", "agenda", "--mentioned", "nowhere"], _environ(tmp_path))
+
+    assert code == EXIT_USAGE_ERROR
+    assert "nowhere" in err
+    assert "alpha" in err
+    assert out == ""
+
+
+def test_catalog_agenda_refuses_arguments_that_contradict_each_other(tmp_path: Path) -> None:
+    """Selected and declined are two different endings; a Kind cannot have both."""
+    code, out, err = _run(
+        ["catalog", "agenda", "--selected", "alpha", "--declined", "alpha"], _environ(tmp_path)
+    )
+
+    assert code == EXIT_USAGE_ERROR
+    assert "SELECTED -> DECLINED" in err
+    assert out == ""
+
+
+def test_catalog_agenda_exits_3_when_a_schema_is_missing(tmp_path: Path) -> None:
+    """It reports plannability, so it needs the same schemas `validate` does."""
+    environ = _environ(tmp_path)
+    (tmp_path / "config" / "catalog" / "schemas" / "alpha.v1.yaml").unlink()
+
+    code, out, err = _run(["catalog", "agenda"], environ)
+
+    assert code == EXIT_CONFIGURATION_ERROR
+    assert "alpha.v1.yaml" in err
+    assert out == ""
+
+
+def test_catalog_agenda_exits_3_when_the_catalog_is_broken(tmp_path: Path) -> None:
+    environ = _environ(tmp_path)
+    write_catalog(tmp_path / "config", BROKEN_CATALOGS["dependency_cycle"][1])
+
+    code, out, err = _run(["catalog", "agenda"], environ)
+
+    assert code == EXIT_CONFIGURATION_ERROR
+    assert "dependency cycle" in err
+    assert out == ""
+
+
 def test_doctor_reports_settings_adapters_and_ports(tmp_path: Path) -> None:
     code, out, _ = _run(["doctor"], _environ(tmp_path))
 
@@ -363,6 +478,8 @@ def test_doctor_reports_settings_adapters_and_ports(tmp_path: Path) -> None:
     assert "ComponentCatalog: YamlComponentCatalog" in out
     assert "[ok  ] clock" in out
     assert "[ok  ] component_catalog" in out
+    assert "[ok  ] priority_policy" in out
+    assert "priority_policy: weighted" in out
     assert "doctor: ok" in out
 
 

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from tourganize import __version__
 
@@ -51,6 +54,28 @@ def _first_shipped_kind() -> str:
         if line.strip().startswith("- kind_key:"):
             return line.split(":", 1)[1].strip()
     raise AssertionError(f"{SHIPPED_CATALOG} declares no Component Kinds")
+
+
+def _shipped_kinds_by_weight() -> list[str]:
+    """The enabled shipped ``kind_key``s, heaviest first, read from the catalog file itself.
+
+    Read rather than written down, for the same reason as ``_first_shipped_kind``: this suite
+    must not become the place either a travel topic or a priority weight is hardcoded.
+    """
+    declared: list[tuple[int, int, str]] = []
+    key: str | None = None
+    weight = 0
+    for order, line in enumerate(SHIPPED_CATALOG.read_text(encoding="utf-8").splitlines()):
+        stripped = line.strip()
+        if stripped.startswith("- kind_key:"):
+            key = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("priority_weight:"):
+            weight = int(stripped.split(":", 1)[1].strip())
+        elif stripped.startswith("enabled:") and key is not None:
+            if stripped.split(":", 1)[1].strip() == "true":
+                declared.append((-weight, order, key))
+            key = None
+    return [key for _weight, _order, key in sorted(declared)]
 
 
 def _blocking_values_of(kind_key: str) -> dict[str, object]:
@@ -191,6 +216,116 @@ def test_a_schema_that_contradicts_the_catalog_exits_3(tmp_path: Path) -> None:
     assert result.returncode == 3
     assert "elsewhere" in result.stderr
     assert result.stdout == ""
+
+
+def _agenda_rows(out: str) -> list[list[str]]:
+    """The printed Planning Agenda's rows as columns: kind_key, band, rank, awaits, reason."""
+    lines = out.splitlines()
+    rule = next(index for index, line in enumerate(lines) if line and set(line) <= {"-", " "})
+    return [line.split() for line in itertools.takewhile(bool, lines[rule + 1 :])]
+
+
+def _agenda_keys(out: str) -> list[str]:
+    """The ``kind_key`` column of a printed Planning Agenda, in the order it was printed."""
+    return [row[0] for row in _agenda_rows(out)]
+
+
+def _first_shipped_dependency() -> tuple[str, str]:
+    """The first declared Outcome Dependency of the shipped catalog, as (dependent, blocker).
+
+    Read from the file rather than written down, for the same reason as the helpers above: the
+    catalog is the only place a travel topic exists, and this suite must not become a second.
+    """
+    key: str | None = None
+    for line in SHIPPED_CATALOG.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- kind_key:"):
+            key = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("requires_outcome_of:") and key is not None:
+            declared = stripped.split(":", 1)[1].split("#")[0].strip().strip("[]")
+            blockers = [item.strip() for item in declared.split(",") if item.strip()]
+            if blockers:
+                return key, blockers[0]
+    raise AssertionError(f"{SHIPPED_CATALOG} declares no Outcome Dependency")
+
+
+def test_the_shipped_catalog_produces_the_planning_agenda(tmp_path: Path) -> None:
+    """The Definition of Done, against the files the application actually ships with: the
+    mentioned Kind first whatever its weight, then the rest of the catalog by weight."""
+    by_weight = _shipped_kinds_by_weight()
+    mentioned = by_weight[-1]  # the lightest shipped Kind, so weight alone would rank it last
+
+    result = _run("catalog", "agenda", "--mentioned", mentioned, tmp_path=tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    rule = next(index for index, line in enumerate(lines) if line and set(line) <= {"-", " "})
+    rows = [line.split() for line in itertools.takewhile(bool, lines[rule + 1 :])]
+    assert [(row[0], row[1], row[2]) for row in rows] == [  # kind_key, band, rank
+        (mentioned, "MENTIONED", "0"),
+        *(
+            (key, "UNMENTIONED", str(rank))
+            for rank, key in enumerate(key for key in by_weight if key != mentioned)
+        ),
+    ]
+    assert f"next_actionable: {mentioned}" in result.stdout
+    assert "mentioned_band_empty: false" in result.stdout
+
+
+@pytest.mark.parametrize("policy", ["weighted", "fixed"])
+def test_the_shipped_catalog_orders_an_outcome_dependency_inside_a_band(
+    tmp_path: Path, policy: str
+) -> None:
+    """The Definition of Done's dependency case, against the files the application ships with:
+    both Kinds mentioned, the blocker planned first, the dependent labelled ``awaits_outcome``.
+
+    Run against **both** policies because the ordering is ``build_agenda``'s and not the
+    policy's (D16): ``fixed`` reads no ``requires_outcome_of`` at all and must still not plan a
+    Kind before the one it awaits.
+    """
+    dependent, blocker = _first_shipped_dependency()
+
+    result = _run(
+        "catalog",
+        "agenda",
+        "--mentioned",
+        f"{dependent},{blocker}",
+        tmp_path=tmp_path,
+        TOURGANIZE_PRIORITY_POLICY=policy,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    mentioned = [row for row in _agenda_rows(result.stdout) if row[1] == "MENTIONED"]
+    assert [row[0] for row in mentioned] == [blocker, dependent]
+    assert [row[2] for row in mentioned] == ["0", "1"]
+    assert mentioned[0][3] == "-"  # the blocker awaits nothing that is open in this band
+    assert (mentioned[1][3], mentioned[1][4]) == (blocker, "awaits_outcome")
+    assert f"next_actionable: {blocker}" in result.stdout
+
+
+def test_the_configured_policy_reaches_the_installed_command(tmp_path: Path) -> None:
+    """``TOURGANIZE_PRIORITY_POLICY`` selects the policy in a real process, and the output says
+    which one produced the order. That it *changes* the order is proven against a catalog whose
+    declaration order disagrees with its weights, in ``test_priority_policy_swap.py``; the
+    shipped file declares its Kinds heaviest first, so both policies agree about it — which is
+    worth asserting too, because it is the reason the shipped default is uncontroversial."""
+    declared = _run("catalog", "show", tmp_path=tmp_path)
+    fixed = _run("catalog", "agenda", tmp_path=tmp_path, TOURGANIZE_PRIORITY_POLICY="fixed")
+    weighted = _run("catalog", "agenda", tmp_path=tmp_path)
+
+    assert declared.returncode == 0, declared.stdout + declared.stderr
+    assert "(policy fixed)" in fixed.stdout
+    assert "(policy weighted)" in weighted.stdout
+    assert _agenda_keys(fixed.stdout) == _shipped_kinds_by_weight()
+    assert _agenda_keys(fixed.stdout) == _agenda_keys(weighted.stdout)
+
+
+def test_doctor_probes_the_priority_policy_against_the_shipped_catalog(tmp_path: Path) -> None:
+    result = _run("doctor", tmp_path=tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PriorityPolicy: WeightedCatalogPolicy" in result.stdout
+    assert "[ok  ] priority_policy: WeightedCatalogPolicy (weighted) would plan " in result.stdout
 
 
 def test_a_catalog_with_a_cycle_exits_3(tmp_path: Path) -> None:

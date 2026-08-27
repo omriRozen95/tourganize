@@ -9,16 +9,25 @@ notice.
 where that key becomes a Requirement Schema — a file for the YAML adapter, an object handed in
 for the fake, a row somewhere else. What the *catalog* is and where the *schemas* are are the
 same question as far as a caller is concerned, which is why they are one port and not two.
+
+``PriorityPolicy`` (F04) belongs to this module too, and is re-exported from it rather than
+declared here. It orders the Component Kinds a catalog declares, so this is where a reader
+looks for it — but the Mentioned-First Rule that consumes its output is a domain function, and
+the domain may import nothing but the standard library and itself. The protocol is therefore
+defined in :mod:`tourganize.domain.catalog.prioritization`, exactly as
+:class:`~tourganize.domain.errors.TourganizeError` is defined in the domain and read from
+``tourganize.platform.errors``. Its adapters are ``WeightedCatalogPolicy`` (the shipped
+default) and ``FixedOrderPolicy`` (the fake), both in ``tourganize.adapters.catalog.priority``.
 """
 
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from tourganize.domain.catalog import ComponentKind
+from tourganize.domain.catalog import ComponentKind, PriorityPolicy
 from tourganize.domain.requirements import RequirementSchema
 
-__all__ = ["ComponentCatalog"]
+__all__ = ["ComponentCatalog", "PriorityPolicy"]
 
 
 @runtime_checkable

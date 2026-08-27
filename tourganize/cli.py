@@ -1,9 +1,9 @@
 """The ``tourganize`` command line.
 
-Three commands work today: ``--version``, ``doctor`` and ``catalog`` (``show``, ``validate``
-and ``gaps``). The rest of the surface is registered as stubs that name the feature which
-will implement them, so the shape of the finished application is discoverable from the first
-release and no later feature has to invent its own entry point.
+Three commands work today: ``--version``, ``doctor`` and ``catalog`` (``show``, ``validate``,
+``gaps`` and ``agenda``). The rest of the surface is registered as stubs that name the feature
+which will implement them, so the shape of the finished application is discoverable from the
+first release and no later feature has to invent its own entry point.
 
 Exit codes are part of the contract:
 
@@ -24,14 +24,19 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Final, TextIO
 
 from tourganize import __version__
 from tourganize.application.composition import Container, build_container
 from tourganize.application.diagnostics import run_diagnostics
-from tourganize.domain.catalog import ComponentKind
-from tourganize.domain.errors import UnknownComponentKindError, UnknownFieldError
+from tourganize.domain.catalog import ComponentKind, PlanningAgenda, build_agenda
+from tourganize.domain.errors import (
+    IllegalTransitionError,
+    UnknownComponentKindError,
+    UnknownFieldError,
+)
 from tourganize.domain.requirements import (
     GapReport,
     RequirementSchema,
@@ -39,6 +44,7 @@ from tourganize.domain.requirements import (
     RequirementUpdate,
     analyse,
 )
+from tourganize.domain.trip import TripPlan
 from tourganize.platform.errors import ConfigurationError
 from tourganize.platform.logging import configure_logging
 from tourganize.platform.settings import Settings, unrecognised_keys
@@ -56,22 +62,71 @@ EXIT_NOT_IMPLEMENTED: Final = 2
 EXIT_USAGE_ERROR: Final = 2
 EXIT_CONFIGURATION_ERROR: Final = 3
 
-#: The ``catalog`` actions this release implements.
-CATALOG_ACTIONS: Final = ("show", "validate", "gaps")
+#: The ``catalog`` actions this release implements. F04 implemented the last one that was
+#: awaiting a feature, so ``catalog`` has no stub actions left; the convention lives on in
+#: :data:`PLANNED_COMMANDS`, and a later feature that plans a new ``catalog`` action follows it.
+CATALOG_ACTIONS: Final = ("show", "validate", "gaps", "agenda")
 
-#: Sub-commands of ``catalog`` that later features implement:
-#: name -> (feature, what that feature delivers). Each entry is deleted from this table by
-#: the feature that implements the command.
-PLANNED_CATALOG_COMMANDS: Final[Mapping[str, tuple[str, str]]] = {
-    "agenda": ("F04", "the Planning Agenda, with bands and ranks"),
-}
-
-#: Top-level sub-commands that later features implement, same convention as above.
+#: Top-level sub-commands that later features implement:
+#: name -> (feature, what that feature delivers). Each entry is deleted from this table by the
+#: feature that implements the command.
 PLANNED_COMMANDS: Final[Mapping[str, tuple[str, str]]] = {
     "chat": ("F07", "the terminal Presentation Surface"),
     "resume": ("F12", "session persistence and resume"),
     "export": ("F13", "itinerary projection and rendering"),
     "docs": ("F18", "the Knowledge Corpus: add, list, query, index"),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _AgendaArgument:
+    """One ``catalog agenda`` flag: the help text it offers, and what it does to a Trip Plan.
+
+    The two live together because they are the whole of what the flag *is*. Parsing is shared
+    — every one of them is a comma-separated list of ``kind_key`` — so a fourth flag is one
+    row of :data:`_AGENDA_ARGUMENTS` and the small function it names, and no edit to the
+    parser, the dispatch or either function that builds the plan.
+    """
+
+    help_text: str
+    apply: Callable[[TripPlan, Sequence[str]], None]
+
+
+def _mention_each(plan: TripPlan, kind_keys: Sequence[str]) -> None:
+    """Mention order becomes turn order: the first ``--mentioned`` Kind was raised on turn 0.
+
+    That is what a conversation would have recorded, and what F05 reads.
+    """
+    for turn_index, kind_key in enumerate(kind_keys):
+        plan.mark_mentioned(kind_key, turn_index)
+
+
+def _select_each(plan: TripPlan, kind_keys: Sequence[str]) -> None:
+    """Describe each Kind as already chosen.
+
+    The CLI has no Option Source (F06) and therefore no Plan Option a Selection could name, so
+    the aggregate's own ``mark_selected`` is what produces the state — nothing out here walks a
+    Component Status edge.
+    """
+    for kind_key in kind_keys:
+        plan.mark_selected(kind_key)
+
+
+def _decline_each(plan: TripPlan, kind_keys: Sequence[str]) -> None:
+    for kind_key in kind_keys:
+        plan.decline(kind_key)
+
+
+#: What ``catalog agenda`` accepts: one comma-separated list of ``kind_key`` per state a Plan
+#: Component can be in before a conversation starts. Order matters and is this order: a mention
+#: is a fact about a turn rather than a Component Status, and selecting before declining is what
+#: makes naming one Kind in both an illegal transition rather than a silently accepted one.
+_AGENDA_ARGUMENTS: Final[Mapping[str, _AgendaArgument]] = {
+    "mentioned": _AgendaArgument(
+        "Component Kinds the traveller raised, earliest first", _mention_each
+    ),
+    "selected": _AgendaArgument("Component Kinds already chosen", _select_each),
+    "declined": _AgendaArgument("Component Kinds the traveller turned down", _decline_each),
 }
 
 
@@ -97,7 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _add_catalog_parser(subcommands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """``catalog`` and its sub-commands, including the ones later features implement."""
+    """``catalog`` and its four actions: ``show``, ``validate``, ``gaps`` and ``agenda``."""
     catalog = subcommands.add_parser("catalog", help="inspect and validate the Component Catalog")
     actions = catalog.add_subparsers(dest="catalog_command", metavar="action")
     actions.add_parser("show", help="list the declared Component Kinds")
@@ -113,9 +168,9 @@ def _add_catalog_parser(subcommands: argparse._SubParsersAction[argparse.Argumen
         metavar="JSON",
         help='requirement values already known, as a JSON object: \'{"place": "Paris"}\'',
     )
-    for name, (feature, summary) in PLANNED_CATALOG_COMMANDS.items():
-        stub = actions.add_parser(name, help=f"[{feature}] {summary}")
-        stub.add_argument("rest", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
+    agenda = actions.add_parser("agenda", help="the Planning Agenda: what to plan next, and why")
+    for name, argument in _AGENDA_ARGUMENTS.items():
+        agenda.add_argument(f"--{name}", default="", metavar="K1,K2", help=argument.help_text)
 
 
 def main(
@@ -147,15 +202,6 @@ def main(
         print(f"configuration error: {exc}", file=err)
         return EXIT_CONFIGURATION_ERROR
 
-    if command == "catalog" and args.catalog_command in PLANNED_CATALOG_COMMANDS:
-        feature, summary = PLANNED_CATALOG_COMMANDS[args.catalog_command]
-        print(
-            f"tourganize catalog {args.catalog_command} is not implemented until "
-            f"{feature} ({summary}).",
-            file=err,
-        )
-        return EXIT_NOT_IMPLEMENTED
-
     if command in PLANNED_COMMANDS:
         feature, summary = PLANNED_COMMANDS[command]
         print(
@@ -176,6 +222,13 @@ def main(
         if command == "catalog" and args.catalog_command == "gaps":
             return _catalog_gaps(
                 build_container(settings), kind_key=args.kind, values=args.values, out=out, err=err
+            )
+        if command == "catalog" and args.catalog_command == "agenda":
+            return _catalog_agenda(
+                build_container(settings),
+                supplied={name: str(getattr(args, name)) for name in _AGENDA_ARGUMENTS},
+                out=out,
+                err=err,
             )
         if command == "catalog":
             return _catalog(build_container(settings), args.catalog_command, out=out, err=err)
@@ -286,6 +339,113 @@ def _requirements_from(schema: RequirementSchema, values: str | None) -> Require
         RequirementUpdate(field_name=str(name), value=value) for name, value in supplied.items()
     ]
     return empty.with_updates(updates, schema=schema)
+
+
+def _catalog_agenda(
+    container: Container,
+    *,
+    supplied: Mapping[str, str],
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """``catalog agenda`` — the Planning Agenda of a plan described on the command line.
+
+    The closest thing to watching the dialogue decide what to do next before the dialogue
+    exists: name what the traveller raised, what is already chosen and what they turned down,
+    and the bands, ranks, reason codes and the entry that would be worked on now are printed.
+
+    ``supplied`` is the raw value of every flag :data:`_AGENDA_ARGUMENTS` declares, keyed by
+    its name — one argument rather than one per flag, so a fourth flag does not reach this
+    signature at all.
+    """
+    catalog = container.component_catalog
+    try:
+        plan = _plan_from(container, supplied)
+    except (UnknownComponentKindError, IllegalTransitionError) as exc:
+        # An unknown or disabled Kind, or arguments that contradict each other — the same Kind
+        # both selected and declined. Both are the invocation's fault, not the catalog's.
+        print(f"tourganize catalog agenda: {exc}", file=err)
+        return EXIT_USAGE_ERROR
+    agenda = build_agenda(
+        plan,
+        catalog.kinds(),
+        container.priority_policy,
+        plannable=_plannability(catalog),
+        failure_skip=container.settings.agenda_failure_skip,
+    )
+    print(
+        _render_agenda(
+            agenda,
+            container.priority_policy.policy_id,
+            origin=str(container.settings.catalog_path),
+        ),
+        file=out,
+    )
+    return EXIT_OK
+
+
+def _kind_keys(supplied: str) -> tuple[str, ...]:
+    """Read ``--mentioned k1,k2`` as Component Kinds, in the order they were given."""
+    return tuple(key.strip() for key in supplied.split(",") if key.strip())
+
+
+def _plan_from(container: Container, supplied: Mapping[str, str]) -> TripPlan:
+    """Build the Trip Plan the arguments describe, refusing a Kind the catalog does not declare.
+
+    Every named Kind is checked before anything is applied, so a typo in the last flag does not
+    leave half a plan behind. Each flag is then applied by the function its row of
+    :data:`_AGENDA_ARGUMENTS` names, in that table's order.
+    """
+    catalog = container.component_catalog
+    parsed = {name: _kind_keys(value) for name, value in supplied.items()}
+    for kind_keys in parsed.values():
+        for kind_key in kind_keys:
+            catalog.kind(kind_key)  # raises for an unknown or disabled Kind, naming the declared
+    plan = TripPlan(plan_id="cli", created_at=container.clock.now())
+    for name, kind_keys in parsed.items():
+        _AGENDA_ARGUMENTS[name].apply(plan, kind_keys)
+    return plan
+
+
+def _plannability(catalog: ComponentCatalog) -> dict[str, bool]:
+    """Which Component Kinds could be sourced right now, knowing nothing about the traveller.
+
+    Nothing has been said, so every Kind whose Requirement Schema has a Blocking Rule answers
+    ``false`` — which is the honest answer, and the reason the reason code is ``not_plannable``
+    rather than ``ready``: the dialogue would elicit, not source.
+    """
+    return {
+        kind.kind_key: analyse(
+            catalog.schema_for(kind.kind_key),
+            RequirementSet.empty(kind.kind_key),
+        ).is_plannable
+        for kind in catalog.enabled_kinds()
+    }
+
+
+def _render_agenda(agenda: PlanningAgenda, policy_id: str, *, origin: str) -> str:
+    """Render the Agenda as one table, plus the two lines the dialogue actually reads."""
+    lines = [f"{origin} (policy {policy_id})", ""]
+    lines += _table(
+        ("kind_key", "band", "rank", "awaits", "reason"),
+        [
+            (
+                entry.kind_key,
+                entry.band.name,
+                str(entry.rank),
+                ", ".join(entry.blocked_by) or "-",
+                entry.reason_code,
+            )
+            for entry in agenda.entries
+        ],
+    )
+    actionable = agenda.next_actionable()
+    lines += [
+        "",
+        f"next_actionable: {actionable.kind_key if actionable is not None else 'none'}",
+        f"mentioned_band_empty: {'true' if agenda.is_mentioned_band_empty() else 'false'}",
+    ]
+    return "\n".join(line.rstrip() for line in lines)
 
 
 def _render_gaps(report: GapReport, schema: RequirementSchema) -> str:

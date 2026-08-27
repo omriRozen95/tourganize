@@ -20,6 +20,8 @@ way of loading configuration.
 | ``TOURGANIZE_SECRETS_FILE`` | Optional ``KEY=value`` file merged *under* the environment | unset |
 | ``TOURGANIZE_TELEMETRY_SINK`` | ``null`` or ``jsonl`` | ``jsonl`` |
 | ``TOURGANIZE_TELEMETRY_PATH`` | Where the JSONL sink writes | ``$DATA_DIR/telemetry.jsonl`` |
+| ``TOURGANIZE_PRIORITY_POLICY`` | ``weighted`` or ``fixed`` | ``weighted`` |
+| ``TOURGANIZE_AGENDA_FAILURE_SKIP`` | Failures in a row before a Kind is skipped | ``2`` |
 
 Three keys are worth a word on. ``TOURGANIZE_CATALOG_PATH`` and ``TOURGANIZE_SCHEMA_DIR``
 follow ``TOURGANIZE_CONFIG_DIR`` unless they are set explicitly, so moving the configuration
@@ -30,6 +32,12 @@ not *there* is not an error here, because a missing file is a runtime condition 
 the ``null`` sink simply never writes there — so nothing downstream has to re-derive it. And a
 secrets file may only set ``TOURGANIZE_*`` keys: a stray key is refused rather than ignored,
 because a secret believed to be loaded is worse than one that is missing.
+
+``TOURGANIZE_AGENDA_FAILURE_SKIP`` takes its default from the domain
+(:data:`~tourganize.domain.catalog.DEFAULT_AGENDA_FAILURE_SKIP`) rather than spelling a
+second ``2`` here: the rule it configures lives there, and a documented default has one
+definition. Anything below 1 is refused — a Component Kind skipped before it has failed even
+once could never be planned at all.
 """
 
 from __future__ import annotations
@@ -41,6 +49,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Final, Literal, TypeVar
 
+from tourganize.domain.catalog import DEFAULT_AGENDA_FAILURE_SKIP
 from tourganize.platform.errors import ConfigurationError
 from tourganize.platform.secrets import REDACTED, SecretValue
 
@@ -49,6 +58,7 @@ __all__ = [
     "SECRET_KEY_SUFFIXES",
     "Env",
     "LogFormat",
+    "PriorityPolicyName",
     "Settings",
     "TelemetrySinkName",
     "default_catalog_path",
@@ -60,12 +70,14 @@ __all__ = [
 Env = Literal["dev", "test", "prod"]
 LogFormat = Literal["json", "human"]
 TelemetrySinkName = Literal["null", "jsonl"]
+PriorityPolicyName = Literal["weighted", "fixed"]
 
 PREFIX: Final = "TOURGANIZE_"
 
 _ENV_VALUES: Final[tuple[Env, ...]] = ("dev", "test", "prod")
 _LOG_FORMATS: Final[tuple[LogFormat, ...]] = ("json", "human")
 _TELEMETRY_SINKS: Final[tuple[TelemetrySinkName, ...]] = ("null", "jsonl")
+_PRIORITY_POLICIES: Final[tuple[PriorityPolicyName, ...]] = ("weighted", "fixed")
 
 DEFAULT_CONFIG_DIR: Final = Path("config")
 DEFAULT_DATA_DIR: Final = Path("var")
@@ -101,6 +113,8 @@ KNOWN_KEYS: Final = frozenset(
         "TOURGANIZE_SECRETS_FILE",
         "TOURGANIZE_TELEMETRY_SINK",
         "TOURGANIZE_TELEMETRY_PATH",
+        "TOURGANIZE_PRIORITY_POLICY",
+        "TOURGANIZE_AGENDA_FAILURE_SKIP",
     }
 )
 
@@ -118,6 +132,8 @@ class Settings:
     data_dir: Path
     telemetry_sink: TelemetrySinkName
     telemetry_path: Path | None
+    priority_policy: PriorityPolicyName
+    agenda_failure_skip: int
     secrets_file: Path | None = None
     secrets: Mapping[str, SecretValue] = field(default_factory=dict)
     # Later features append fields here; they never re-invent loading.
@@ -148,6 +164,12 @@ class Settings:
             telemetry_path=_file(
                 merged, "TOURGANIZE_TELEMETRY_PATH", default_telemetry_path(data_dir)
             ),
+            priority_policy=_choice(
+                merged, "TOURGANIZE_PRIORITY_POLICY", _PRIORITY_POLICIES, "weighted"
+            ),
+            agenda_failure_skip=_at_least_one(
+                merged, "TOURGANIZE_AGENDA_FAILURE_SKIP", DEFAULT_AGENDA_FAILURE_SKIP
+            ),
             secrets_file=secrets_file,
             secrets=_collect_secrets(merged),
         )
@@ -168,6 +190,8 @@ class Settings:
             "data_dir": str(self.data_dir),
             "telemetry_sink": self.telemetry_sink,
             "telemetry_path": "unset" if self.telemetry_path is None else str(self.telemetry_path),
+            "priority_policy": self.priority_policy,
+            "agenda_failure_skip": str(self.agenda_failure_skip),
             "secrets_file": "unset" if self.secrets_file is None else str(self.secrets_file),
             "secrets": _describe_secrets(self.secrets),
         }
@@ -281,6 +305,20 @@ def _choice(
     raise ConfigurationError(
         f"{key}={value!r} is not one of {', '.join(repr(item) for item in allowed)}"
     )
+
+
+def _at_least_one(environ: Mapping[str, str], key: str, default: int) -> int:
+    """A count-valued key: a whole number, one or more, or a refusal naming the key."""
+    value = _raw(environ, key)
+    if value is None:
+        return default
+    try:
+        number = int(value)
+    except ValueError:
+        raise ConfigurationError(f"{key}={value!r} is not a whole number") from None
+    if number < 1:
+        raise ConfigurationError(f"{key}={number} must be at least 1")
+    return number
 
 
 def _log_level(environ: Mapping[str, str], key: str, default: str) -> str:

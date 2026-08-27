@@ -68,7 +68,9 @@ is a hard, non-configurable rule: Kinds the traveller named outrank Kinds they d
 band, order comes from a **declarative Priority Policy** read from the Component Catalog: each
 Component Kind declares a `priority_weight` and its `requires_outcome_of` Outcome Dependencies. The
 shipped default weights are `air_travel > lodging > ground_transport`, on the grounds that air travel
-constrains dates and cost the most and is the least substitutable.
+constrains dates and cost the most and is the least substitutable. (Which of the two declarations the
+*policy* applies narrowed later: `build_agenda` applies `requires_outcome_of`, for the same reason it
+owns Mentioned-First — see D16.)
 
 **Rationale.** The client explicitly deferred the metric, so it must not become branches. Weights plus
 dependencies in configuration cover every ordering the client is likely to want (including "hotels
@@ -379,3 +381,84 @@ pass one by accident.
 logic does not move; only the receiver does. One module, and the call sites F05 and F12 will have by
 then. Putting the schema *on* the set is the direction this decision closes, and reopening it means
 answering the persistence question first.
+
+---
+
+## D15 — Domain-side declaration of the `PriorityPolicy` port, re-exported from `ports/`
+
+**Status:** accepted · **Owning feature:** [F04](../features/F04-component-prioritization-policy.md) · **Reversed by:** no planned feature (see below)
+
+**Decision.** `PriorityPolicy` is *defined* in `tourganize/domain/catalog/prioritization.py` and
+re-exported by `tourganize/ports/catalog.py`, which stays the module every caller imports it from.
+`ContractViolationError` moves the same way — defined in `domain/errors.py`, read from
+`platform/errors.py`. `build_agenda(plan, kinds, policy, ...)` therefore takes the **declared
+Component Kinds** rather than a `ComponentCatalog`. F04's Contract block writes
+`build_agenda(plan, catalog, policy)` and places the protocol in `ports/catalog.py`; this entry
+records the amendment, because a normative Contract is not something to change quietly.
+
+**Rationale.** The Mentioned-First Rule has to live in the domain — it is the client's hard rule, and
+D3 turns on a policy being unable to reach across the bands — and the domain may import nothing but
+the standard library and itself, `tourganize.ports` and `tourganize.platform` included (import-linter
+contract 1, plus the AST check in `tests/architecture/`). A domain function consequently cannot name a
+port type in a signature or raise a platform error. Three ways out: weaken contract 1 for one type
+name; declare a second, structurally identical protocol inside the domain; or define each type once,
+where the domain can reach it, and re-export it from the module where a reader looks for it. The third
+is what F02 already did for `TourganizeError`, so it is a precedent rather than a new idea, and the
+second is exactly the two-definitions drift `domain/invariants.py` was created to end.
+
+**Cost.** The physical home of a port protocol no longer matches its conceptual one, so somebody
+grepping `tourganize/ports/` for `Protocol` finds one fewer than the port list says exists; both
+modules carry a docstring paragraph explaining why, and that explanation is now something to keep
+true. Handing `build_agenda` a `Sequence[ComponentKind]` also means the caller does the one thing the
+catalog would have done — `catalog.kinds()` — and that `build_agenda` filters disabled Kinds itself
+rather than relying on which accessor it was called with.
+
+**Reversal path.** If a later feature moves Agenda construction out of the domain and into an
+application service, the protocol moves into `ports/catalog.py` and the error back into
+`platform/errors.py`, with no change at any import site: every caller already imports from those two
+modules. Nothing outside the domain may depend on the *definition* site: `tourganize.ports.catalog`
+is the documented import path for the protocol and `tourganize.platform.errors` for the error, and
+code that reaches past them is what would make this reversal expensive.
+
+---
+
+## D16 — Within-band Outcome Dependency ordering lives in `build_agenda`, not in the Priority Policy
+
+**Status:** accepted · **Owning feature:** [F04](../features/F04-component-prioritization-policy.md) · **Reversed by:** no planned feature (see below)
+
+**Decision.** `build_agenda` applies the declared Outcome Dependencies to whatever order the injected
+`PriorityPolicy` returns for a band: an entry whose blocker is open **in the same band** is placed
+after it, and the policy's order is preserved verbatim everywhere the declarations do not contradict
+it. The `blocked_by` label and the position are computed from one call to `awaited_within`, so they
+cannot disagree. F04's Scope item 3 gives the ordering to the policy; this entry records the amendment.
+A policy may still prefer dependency order — `WeightedCatalogPolicy` does — but nothing depends on it
+doing so, and a policy that never reads `requires_outcome_of` is a correct policy.
+
+**Rationale.** F04 states one rule in one sentence: *"if kind B declares `requires_outcome_of: [A]` and
+A is also open in the same band, B ranks after A and records `blocked_by=("A",)`"*. Giving the ordering
+half to the policy and the labelling half to `build_agenda` let the two come apart, and they did:
+`FixedOrderPolicy` reads no `requires_outcome_of` at all, and `TOURGANIZE_PRIORITY_POLICY=fixed` is a
+documented production value, so a catalog that declares a dependent Kind before the Kind it awaits
+produced an entry at rank 0 labelled as awaiting something the Agenda had ranked *after* it. F05 reads
+`reason_code` for control flow and F11 asserts on `explain()`, so a label that contradicts the order is
+not cosmetic. The fix is the one D3 already chose for Mentioned-First: a rule a replaceable policy must
+not be able to break does not live in the policy. Refusing a policy that ignores dependencies at the
+seam was the alternative, and it would have made the documented `fixed` value unusable.
+
+**Cost.** `PriorityPolicy.order` is no longer the last word on a band's order, so "everything inside
+`order` is free to change" now has one exception a policy author has to know about: a declared
+dependency will move their answer. `WeightedCatalogPolicy`'s own dependency-aware sort becomes
+deliberately redundant — kept because it costs nothing and leaves the shipped path with nothing to
+adjust, but no longer the guarantee, which is a duplication that has to stay honest.
+`build_agenda` also has to break dependency cycles rather than loop, which is why the domain now holds
+one `logging` call: `catalog_problems` rejects a cycle before any catalog can load, so the message is
+unreachable through a wired application, but a hang would be a worse failure than an arbitrary order.
+`logging` is standard library and the logger is obtained by `__name__`, so the domain still names no
+module outside itself and repeats no configuration.
+
+**Reversal path.** Delete `_dependencies_first` from `tourganize/domain/catalog/prioritization.py` and
+the ordering falls back to whatever the policy answers, with `blocked_by` unchanged — which is exactly
+the state this decision fixed, so the reversal is only sound together with a policy contract that
+*requires* dependency-respecting output and a seam that enforces it. The tests that would fail first
+are `test_no_policy_can_make_the_order_and_the_labels_disagree` and the parametrised
+`test_the_order_and_the_blocked_by_labels_never_disagree` in the contract suite.

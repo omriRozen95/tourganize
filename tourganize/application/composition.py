@@ -8,7 +8,6 @@ Every later feature adds its port slot to :class:`Container` and its adapter sel
 Slots the roadmap will add here, with the feature that owns each:
 
 ===========================  =========================================
-``priority_policy``          F04  ``PriorityPolicy``
 ``turn_interpreter``         F05  ``TurnInterpreter``
 ``option_slate_planner``     F05  ``OptionSlatePlanner``
 ``option_sources``           F06  ``OptionSource`` (one per Component Kind profile)
@@ -29,12 +28,13 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
+from tourganize.adapters.catalog.priority import FixedOrderPolicy, WeightedCatalogPolicy
 from tourganize.adapters.catalog.yaml import YamlComponentCatalog
 from tourganize.adapters.clock.system import SystemClock
 from tourganize.adapters.telemetry.jsonl import JsonlTelemetrySink
 from tourganize.adapters.telemetry.null import NullTelemetrySink
 from tourganize.platform.settings import Settings, default_telemetry_path
-from tourganize.ports.catalog import ComponentCatalog
+from tourganize.ports.catalog import ComponentCatalog, PriorityPolicy
 from tourganize.ports.platform import Clock, TelemetrySink
 
 __all__ = ["Container", "build_container"]
@@ -43,7 +43,6 @@ __all__ = ["Container", "build_container"]
 #: prints this so the surface of what is not yet built stays visible.
 PENDING_PORTS: Final[MappingProxyType[str, str]] = MappingProxyType(
     {
-        "PriorityPolicy": "F04",
         "TurnInterpreter": "F05",
         "OptionSlatePlanner": "F05",
         "OptionSource": "F06",
@@ -67,6 +66,7 @@ class Container:
     clock: Clock
     telemetry_sink: TelemetrySink
     component_catalog: ComponentCatalog
+    priority_policy: PriorityPolicy
 
     def adapters(self) -> MappingProxyType[str, str]:
         """Return ``port name -> adapter class name``, for ``doctor`` and telemetry."""
@@ -75,6 +75,7 @@ class Container:
                 "Clock": type(self.clock).__name__,
                 "TelemetrySink": type(self.telemetry_sink).__name__,
                 "ComponentCatalog": type(self.component_catalog).__name__,
+                "PriorityPolicy": type(self.priority_policy).__name__,
             }
         )
 
@@ -89,7 +90,21 @@ def build_container(settings: Settings) -> Container:
         # failing `doctor` check, not an exception thrown while the container is being wired.
         # The same laziness covers the Requirement Schemas it resolves ``schema_key`` against.
         component_catalog=YamlComponentCatalog(settings.catalog_path, settings.schema_dir),
+        priority_policy=_build_priority_policy(settings),
     )
+
+
+def _build_priority_policy(settings: Settings) -> PriorityPolicy:
+    """Select the Priority Policy named by ``TOURGANIZE_PRIORITY_POLICY``.
+
+    ``fixed`` is built with no configured order on purpose: with none, ``FixedOrderPolicy``
+    keeps the order it is handed, which is the order the Component Catalog declares its Kinds
+    in. "Plan them in the order the file lists them, ignoring the weights" is the whole meaning
+    of the setting, and it needs no second key to say it in.
+    """
+    if settings.priority_policy == "fixed":
+        return FixedOrderPolicy()
+    return WeightedCatalogPolicy()
 
 
 def _build_telemetry_sink(settings: Settings) -> TelemetrySink:

@@ -26,10 +26,22 @@ The Component Catalog is the file F02 filled in, and it is the **only** place in
 repository where a travel topic exists: an automated test asserts that grepping
 `tourganize/` for a shipped `kind_key` returns nothing. Adding a topic is an entry here.
 
+A Component Kind's `priority_weight` and `requires_outcome_of` are what the **Planning Agenda**
+is ordered by (F04): higher weights are planned earlier *within* a band, ties break by the order
+the Kinds are declared in this file, and an Outcome Dependency moves a Kind after the ones it
+reads — while those are still open in the same band, and never otherwise. The weights are read by
+the Priority Policy; the dependencies are applied to whatever the policy answers, so no choice of
+policy can plan a Kind before the one it awaits. Two environment keys
+tune that: `TOURGANIZE_PRIORITY_POLICY` (`weighted`, the default, reads the weights; `fixed`
+plans them in the order this file lists them and ignores the weights) and
+`TOURGANIZE_AGENDA_FAILURE_SKIP` (default `2`, how many failures in a row a Kind gets before the
+Agenda steps over it). Neither can affect the Mentioned-First Rule, which is not configurable.
+
 These files are read by a deliberately small YAML reader
 (`tourganize/platform/yaml_subset.py`, see D13), which refuses anything outside the subset
 it documents rather than guessing. `tourganize catalog validate` loads the catalog **and
 every enabled kind's Requirement Schema**, and reports every problem it finds; `tourganize
 doctor` reports the catalog as one check. `tourganize catalog gaps --kind <k>
-[--set '<json>']` prints what a component still needs — the closest thing to running the
-dialogue before the dialogue exists.
+[--set '<json>']` prints what a component still needs, and `tourganize catalog agenda
+[--mentioned k1,k2] [--selected k3] [--declined k4]` prints what would be planned next and why —
+between them, the closest thing to running the dialogue before the dialogue exists.

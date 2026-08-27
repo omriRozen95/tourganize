@@ -7,6 +7,12 @@ class defined in ``tourganize.platform``. ``tourganize.platform.errors`` therefo
 import path — ``from tourganize.platform.errors import TourganizeError`` — working and keeps
 the promise that *every* deliberate error has one base class.
 
+:class:`ContractViolationError` is here for the same mechanical reason. It is a *port*
+failure by meaning, and ``tourganize.platform.errors`` is still where it is read from and
+imported from — but the seam that checks a replaceable ``PriorityPolicy``'s output lives in
+``tourganize.domain.catalog.prioritization`` (F04), so the class has to be reachable from the
+domain to be raised there at all.
+
 The split to remember when adding an error later: a rule the domain owns raises from here; a
 failure of configuration, a port or an adapter raises from ``tourganize.platform.errors``.
 """
@@ -14,6 +20,7 @@ failure of configuration, a port or an adapter raises from ``tourganize.platform
 from __future__ import annotations
 
 __all__ = [
+    "ContractViolationError",
     "IllegalTransitionError",
     "InvariantViolationError",
     "RequirementValueError",
@@ -26,6 +33,16 @@ __all__ = [
 
 class TourganizeError(Exception):
     """Base class for every error Tourganize raises deliberately."""
+
+
+class ContractViolationError(TourganizeError):
+    """Data crossing a port boundary did not satisfy the declared contract.
+
+    Read from :mod:`tourganize.platform.errors`, which re-exports it: the hierarchy is
+    documented in one place. It is *defined* here because the domain may import nothing but
+    the standard library and itself, and the Planning Agenda's check of a replaceable
+    ``PriorityPolicy`` — a policy that invents or drops a ``kind_key`` — is a domain function.
+    """
 
 
 class InvariantViolationError(TourganizeError):
