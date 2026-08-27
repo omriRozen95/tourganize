@@ -518,3 +518,45 @@ No import site changes: every caller already imports from `tourganize.ports.cata
 three modules is what would make this reversal expensive. The tests that would fail first are
 `test_the_pure_packages_import_only_the_standard_library_and_what_they_are_allowed` and
 `test_the_domain_may_not_import_the_ports_but_the_dialogue_may` in `tests/architecture/`.
+
+---
+
+## D18 — `DECLINED` is not terminal: the traveller's own mention reopens a declined Component Kind
+
+**Status:** accepted · **Owning feature:** [F05](../features/F05-dialogue-director-and-session-lifecycle.md) · **Reversed by:** no planned feature (see below)
+
+**Decision.** `LEGAL_TRANSITIONS[ComponentStatus.DECLINED]` gains exactly one edge,
+`DECLINED -> ELICITING`, and only one thing in the system walks it: the Dialogue Director, when the
+Turn Interpreter reports that the traveller *themselves* raised a Component Kind that had been
+declined. `DECLINED` stays in `SETTLED_STATUSES`, there is no edge to `READY`, `SOURCING` or
+`SELECTED`, and `TripPlan.decline` is unchanged. F02's module docstring, the glossary's "`DECLINED`
+is terminal" row and the F02 test that pinned an empty edge set are amended in the same change.
+
+**Rationale.** F05's Definition of done states both halves of the client's rule: a declined Kind is
+never *offered* again, **and** "a declined kind mentioned *by the traveller* later is still planned
+(decline is about offers, not prohibition)". The second half was unreachable — a terminal `DECLINED`
+meant a later mention could only be *recorded*, so the assistant would hear "actually, I do want a
+car" and silently do nothing about it. That is the failure mode the whole feature exists to avoid,
+and it is worse than the one a terminal status was protecting against.
+
+The protection is not lost, and it is now structural rather than a second rule that could drift out
+of step with the first. Offers are drawn from the Planning Agenda's **unmentioned** band; the only
+way out of `DECLINED` is a mention; `mark_mentioned` never un-mentions a Kind. So a reopened Kind is
+permanently in the mentioned band, which is the band a Proactive Offer is never drawn from, and no
+code path can offer a declined Kind twice. Reopening lands in `ELICITING` rather than `READY` for the
+same reason blocking gaps precede sourcing everywhere else: whatever is still unknown is asked for,
+not guessed.
+
+**Cost.** "`DECLINED` is terminal" was a one-sentence rule a reader could hold in their head, and it
+is now a one-sentence rule with a named exception. The Component Status machine has no fully terminal
+status left, so a reader looking for one finds `CLOSED` on the *Dialogue* State machine instead and
+has to keep the two apart. F12 also inherits a slightly larger space of stored sessions to be able to
+load: a component may now carry a decline in its history and be open.
+
+**Reversal path.** Delete the edge, restore the glossary row and the F02 test, and F05's
+`_reopen_if_declined` becomes dead code to delete with it — nothing else calls
+`advance_to(ELICITING)` on a declined component, and no persisted shape changes. The behaviour that
+would go with it is the DoD line above, so reversing this means asking the client to drop it. The
+tests that would fail first are `test_declined_reopens_only_by_eliciting` in
+`tests/unit/test_plan_component.py` and
+`test_a_declined_kind_the_traveller_raises_again_is_planned` in `tests/unit/test_dialogue_director.py`.

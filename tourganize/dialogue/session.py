@@ -111,7 +111,7 @@ class TranscriptEntry:
     acts: tuple[AssistantAct, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.turn is not None and not isinstance(self.turn, UserTurn):
+        if self.turn is not None and type(self.turn) is not UserTurn:
             raise InvariantViolationError(
                 f"TranscriptEntry.turn must be a UserTurn or None, got {self.turn!r}"
             )
@@ -120,7 +120,7 @@ class TranscriptEntry:
                 f"TranscriptEntry.acts must be a tuple, got {self.acts!r}"
             )
         for act in self.acts:
-            if not isinstance(act, AssistantAct):
+            if type(act) is not AssistantAct:
                 raise InvariantViolationError(
                     f"TranscriptEntry.acts holds AssistantAct, got {act!r}"
                 )
@@ -146,7 +146,7 @@ class PlanningSession:
         require_text(self.session_id, "PlanningSession.session_id")
         require_aware(self.created_at, "PlanningSession.created_at")
         require_text(self.locale, "PlanningSession.locale")
-        if not isinstance(self.plan, TripPlan):
+        if type(self.plan) is not TripPlan:
             raise InvariantViolationError(
                 f"PlanningSession.plan must be a TripPlan, got {self.plan!r}"
             )
@@ -177,10 +177,6 @@ class PlanningSession:
     def acts(self) -> tuple[AssistantAct, ...]:
         """Every Assistant Act of the session so far, in the order they were emitted."""
         return tuple(act for entry in self.transcript for act in entry.acts)
-
-    def turns(self) -> tuple[UserTurn, ...]:
-        """Every User Turn of the session so far, in arrival order."""
-        return tuple(entry.turn for entry in self.transcript if entry.turn is not None)
 
 
 def new_session(

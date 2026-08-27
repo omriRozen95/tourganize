@@ -18,8 +18,12 @@ Three edges are worth explaining, because they are what makes the client's rules
   ``FAILED -> DECLINED`` because the other honest way out of a component that will not source
   is for the traveller to drop it. Both matter: ``PlanCompleteness`` counts a failed component
   as *open*, so without the second edge a plan could never be closed over one.
-* ``DECLINED`` has no way out at all: a kind the traveller turned down is never offered again
-  in that session.
+* ``DECLINED -> ELICITING`` is the *only* way out of ``DECLINED``, and it exists because
+  declining is about **offers**, not prohibition (D18): a traveller who turns down a suggestion
+  and later raises that same Kind themselves is asking for it, and the assistant must plan it.
+  Nothing else may reopen a declined component — there is no edge to ``READY``, ``SOURCING`` or
+  ``SELECTED`` — so the client's hard rule survives as it was stated: a declined Kind is never
+  *offered* again in that session.
 """
 
 from __future__ import annotations
@@ -106,7 +110,10 @@ _TRANSITIONS: Final[dict[ComponentStatus, frozenset[ComponentStatus]]] = {
     ComponentStatus.SELECTED: frozenset(
         {ComponentStatus.SOURCING, ComponentStatus.ELICITING, ComponentStatus.FAILED}
     ),
-    ComponentStatus.DECLINED: frozenset(),
+    # The one edge out of DECLINED, and it is deliberately the narrowest one: a declined Kind
+    # the traveller raises again re-enters *eliciting*, so whatever is still missing is asked
+    # for rather than sourced behind their back. See D18.
+    ComponentStatus.DECLINED: frozenset({ComponentStatus.ELICITING}),
     ComponentStatus.FAILED: frozenset(
         {ComponentStatus.SOURCING, ComponentStatus.ELICITING, ComponentStatus.DECLINED}
     ),

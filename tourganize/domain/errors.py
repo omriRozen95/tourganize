@@ -85,7 +85,16 @@ class UnknownFieldError(TourganizeError):
     Deliberately not ignored. An update for a field nobody declared almost always means an
     extraction prompt (F08) and a schema have drifted apart, and a silently dropped value is
     a traveller repeating themselves while the assistant appears not to listen.
+
+    Carries :attr:`field_name` for the reason :class:`RequirementValueError` does: the
+    dialogue turns this into an Act payload naming the field, and a caller that had to
+    re-derive the name by re-walking the batch against the schema would be deriving something
+    the raiser already knew.
     """
+
+    def __init__(self, field_name: str, message: str) -> None:
+        super().__init__(message)
+        self.field_name = field_name
 
 
 class RequirementValueError(TourganizeError):

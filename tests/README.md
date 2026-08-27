@@ -50,9 +50,11 @@ differ from the real adapter's.** Same fields, same errors, same ordering guaran
   plausible Provenance, so a test names only what it is about.
 - `write_catalog(config_dir, text=SAMPLE_CATALOG)`, `write_schemas(config_dir,
   schemas=SAMPLE_SCHEMAS)`, `write_keywords(config_dir, tables={"en": SAMPLE_KEYWORDS})`,
-  `schemas_dir(config_dir)`, `keywords_dir(config_dir)` and their sample constants are plain
-  functions, imported as `from conftest import write_catalog` by the tests that need a *broken*
-  catalog, schema or phrase table. `tests` is on `pythonpath` in `pyproject.toml` so that import does not
+  `schemas_dir(config_dir)`, `keywords_dir(config_dir)`, `keyword_table(*kind_keys)` and their
+  sample constants are plain functions, imported as `from conftest import write_catalog` by the
+  tests that need a *broken* catalog, schema or phrase table. `keyword_table()` is where
+  `SAMPLE_KEYWORDS` comes from: a suite whose Component Kinds differ from `SAMPLE_CATALOG`'s asks
+  for a table naming its own, rather than copying one and editing the `kinds:` block. `tests` is on `pythonpath` in `pyproject.toml` so that import does not
   depend on pytest's import mode; the same mechanism is what lets `tests/architecture` import
   `boundaries`.
 - `schemas_dir(config_dir)` is the documented `TOURGANIZE_SCHEMA_DIR` default. The YAML adapter

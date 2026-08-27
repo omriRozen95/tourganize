@@ -223,7 +223,7 @@ class TurnInterpretation:
                 f"got {self.requirement_updates!r}"
             )
         for update in self.requirement_updates:
-            if not isinstance(update, RequirementUpdate):
+            if type(update) is not RequirementUpdate:
                 raise InvariantViolationError(
                     f"TurnInterpretation.requirement_updates holds RequirementUpdate, "
                     f"got {update!r}"

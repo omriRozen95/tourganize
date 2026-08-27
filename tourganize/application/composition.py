@@ -48,8 +48,11 @@ from tourganize.ports.platform import Clock, TelemetrySink
 
 __all__ = ["Container", "build_container", "build_dialogue_settings"]
 
-#: Ports the roadmap introduces later, and the feature that wires each one. ``doctor``
-#: prints this so the surface of what is not yet built stays visible.
+#: Ports with no adapter in the Container yet, and the feature that wires one. ``doctor``
+#: prints this so the surface of what is not yet built stays visible. Most are ports a later
+#: feature also *introduces*; ``OptionSlatePlanner`` is not — F05 declares that protocol and
+#: ships a fake for tests, and it is listed here because the real planning service over
+#: ``OptionSource`` is F06's.
 PENDING_PORTS: Final[MappingProxyType[str, str]] = MappingProxyType(
     {
         "OptionSlatePlanner": "F06",

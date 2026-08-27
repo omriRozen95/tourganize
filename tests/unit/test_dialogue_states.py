@@ -99,8 +99,24 @@ def test_closing_goes_through_the_summary() -> None:
 
 
 def test_refining_may_re_block_instead_of_sourcing() -> None:
-    """A refinement that invalidates a value goes back to eliciting — the client's own rule."""
-    assert TRANSITIONS[S.REFINING] == frozenset({S.SOURCING, S.ELICITING_BLOCKING})
+    """A refinement that invalidates a value goes back to eliciting — the client's own rule.
+
+    ``AWAITING_CHOICE`` is the third edge and it is the unwind one: a refinement the Director
+    could not act on leaves the slate where it was rather than claiming to elicit something.
+    """
+    assert TRANSITIONS[S.REFINING] == frozenset(
+        {S.SOURCING, S.ELICITING_BLOCKING, S.AWAITING_CHOICE}
+    )
+
+
+def test_the_mid_turn_states_can_unwind_to_the_resting_state_a_turn_arrived_in() -> None:
+    """A turn that got as far as a planner and came back empty-handed says so and stops.
+
+    ``ELICITING_BLOCKING`` is a state the Director enters by *asking*; a turn with nothing to
+    ask and nothing to offer must be able to put the session back where it found it instead.
+    """
+    for state in RESTING_STATES - {S.CLOSED}:
+        assert state in TRANSITIONS[S.SOURCING], state.name
 
 
 def test_optional_elicitation_never_holds_anything_up() -> None:

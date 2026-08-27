@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-from conftest import write_keywords
+from conftest import keyword_table, write_keywords
 
 from tourganize.adapters.catalog.memory import InMemoryComponentCatalog
 from tourganize.adapters.catalog.priority import WeightedCatalogPolicy
@@ -76,30 +76,10 @@ from tourganize.ports.platform import TelemetryEvent
 S = DialogueState
 C = ComponentStatus
 
-#: A phrase table for the three neutral Component Kinds these scenarios drive. Small, English,
-#: and about the machinery: the shipped tables name travel topics, and this one must not.
-DIRECTOR_KEYWORDS: Final = """\
-locale: en
-intents:
-  end_session: [goodbye, "that is all"]
-  state_request: ["where are we"]
-  accept_offer: ["yes please", yes]
-  decline_offer: ["no thanks", no]
-  refine: [cheaper, "something else"]
-  small_talk: [hello, thanks]
-kinds:
-  alpha: [alpha]
-  beta: [beta]
-  delta: [delta]
-fields:
-  place: place
-  date_range: date_range
-place_markers: [in, at, near]
-range_separators: ["/", "-", "–", to]
-months:
-  october: 10
-  november: 11
-"""
+#: A phrase table for the three neutral Component Kinds these scenarios drive. The shared one
+#: names ``gamma``, which :data:`KINDS` does not declare; everything else about it is the same,
+#: so it is derived rather than copied.
+DIRECTOR_KEYWORDS: Final = keyword_table("alpha", "beta", "delta")
 
 #: Three enabled Kinds with distinct weights and one Outcome Dependency, so that the Agenda has
 #: something to order and the offer queue something to work through.
@@ -467,7 +447,32 @@ def test_after_the_reask_limit_the_example_is_offered_then_the_component_fails(
     assert harness.component("alpha").status is C.FAILED
     assert acts_of(given_up) == [DELIVER_SUMMARY]
     assert given_up[0].payload["open_mentioned"] == ("alpha",)
-    assert harness.director.session.pending_question is None
+
+
+def test_giving_up_does_not_reset_the_count_so_the_cycle_cannot_restart(
+    harness_factory: HarnessFactory,
+) -> None:
+    """Ask, ask, clarify, fail — and then nothing, however long the traveller keeps going.
+
+    The Pending Question is kept when the Director gives up. Clearing it would make the next
+    turn's attempt look like the first one, and the same component would be asked about,
+    clarified and failed again for as many turns as the traveller had patience for.
+    """
+    harness = harness_factory(settings=DialogueSettings(max_reasks=2, failure_skip=2))
+    harness.say("an alpha in Paris")
+    for _ in range(9):
+        harness.say("in Paris")
+
+    emitted = acts_of(harness.every_act())
+
+    assert emitted.count(ASK_BLOCKING) == 2
+    assert emitted.count(CLARIFY) == 1
+    assert harness.component("alpha").status is C.FAILED
+    assert harness.component("alpha").consecutive_failures == 2
+    standing = harness.director.session.pending_question
+    assert standing is not None and standing.rule_name == "when"
+    # And the Agenda has stepped it over for good, so no later turn can pick it up again.
+    assert acts_of(harness.say("in Paris")) == [DELIVER_SUMMARY]
 
 
 def test_an_invalid_value_is_reported_not_asked_for_again(
@@ -485,6 +490,42 @@ def test_an_invalid_value_is_reported_not_asked_for_again(
     assert harness.component("alpha").round_count == 0
 
 
+def test_the_same_invalid_value_is_not_reported_for_ever(
+    harness_factory: HarnessFactory,
+) -> None:
+    """``report_invalid_value`` is "a re-ask, not a rejection of the turn" — so it is counted.
+
+    Six identical reversed ranges used to produce six identical reports, because the invalid
+    path kept no Pending Question and so had no count to reach a limit with. It escalates the
+    same way an unanswered question does: report, report, example, then give up.
+    """
+    harness = harness_factory(settings=DialogueSettings(max_reasks=2, failure_skip=2))
+    reversed_range = "an alpha in Paris 2026-10-28/2026-10-23"
+    for _ in range(6):
+        harness.say(reversed_range)
+
+    emitted = acts_of(harness.every_act())
+
+    assert emitted.count(REPORT_INVALID_VALUE) == 2
+    assert emitted.count(CLARIFY) == 1
+    assert harness.component("alpha").status is C.FAILED
+    assert harness.component("alpha").round_count == 0
+
+
+def test_an_invalid_value_and_a_missing_one_count_against_the_same_obligation(
+    harness_factory: HarnessFactory,
+) -> None:
+    """A Pending Question is about a Blocking Rule, and both ways of failing it are attempts."""
+    harness = harness_factory(settings=DialogueSettings(max_reasks=3))
+    harness.say("an alpha in Paris")
+
+    harness.say("2026-10-28/2026-10-23")
+    standing = harness.director.session.pending_question
+
+    assert standing is not None
+    assert (standing.rule_name, standing.attempts) == ("when", 2)
+
+
 def test_the_invalid_report_carries_no_english_detail(
     harness_factory: HarnessFactory,
 ) -> None:
@@ -492,7 +533,8 @@ def test_the_invalid_report_carries_no_english_detail(
     harness = harness_factory()
     payload = harness.say("an alpha in Paris 2026-10-28/2026-10-23")[0].payload
 
-    assert set(payload) == {"field_name", "reason_message_key"}
+    assert set(payload) == {"field_name", "reason_message_key", "attempt"}
+    assert payload["attempt"] == 1
 
 
 # -- optional filters ------------------------------------------------------------------------
@@ -534,6 +576,44 @@ def test_an_optional_value_may_still_be_supplied_by_any_later_turn(
     held = harness.component("alpha").requirements
     assert held is not None
     assert held.value_of("place") == "Paris"
+
+
+def test_an_optional_field_ignored_at_the_slate_may_be_supplied_later(
+    harness_factory: HarnessFactory,
+) -> None:
+    """Any turn may still supply them: the optional bundle is a question, not a deadline.
+
+    Driven through a scripted interpreter rather than the keyword one, because the phrase table
+    reads a place and a date range and nothing else — the shapes an optional filter arrives in
+    are F08's problem, not this rule's.
+    """
+    harness = harness_factory(
+        interpreter=ScriptedInterpreter(
+            TurnInterpretation(
+                intent=TurnIntent.ANSWER_QUESTION,
+                mentioned_kinds=("alpha",),
+                requirement_updates=(
+                    RequirementUpdate(field_name="place", value="Paris"),
+                    RequirementUpdate(field_name="date_range", value="2026-10-23/2026-10-28"),
+                ),
+            ),
+            TurnInterpretation(
+                intent=TurnIntent.ANSWER_QUESTION,
+                requirement_updates=(RequirementUpdate(field_name="party_size", value=3),),
+            ),
+        )
+    )
+    first = harness.say("an alpha in Paris 2026-10-23/2026-10-28")
+    assert acts_of(first) == [PRESENT_SLATE, ASK_OPTIONAL]
+    assert "party_size" not in first[1].payload["field_names"]
+
+    later = harness.say("three of us")
+
+    held = harness.component("alpha").requirements
+    assert held is not None
+    assert held.value_of("party_size") == 3
+    # And it is not asked about again: the bundle rides with round zero and no other.
+    assert ASK_OPTIONAL not in acts_of(later)
 
 
 # -- the choose-or-refine loop ---------------------------------------------------------------
@@ -733,25 +813,44 @@ def test_an_accepted_kind_is_never_offered_again(harness_factory: HarnessFactory
 
 
 def test_a_declined_kind_is_never_offered_again(harness_factory: HarnessFactory) -> None:
-    """The client's hard rule, and the reason ``DECLINED`` is a terminal Component Status.
-
-    A traveller who raises a declined Kind again has the mention *recorded* — the Transcript and
-    the plan stay honest about what was asked for — but F02's Component Status machine has no
-    edge out of ``DECLINED``, so the Kind stays settled and is neither re-offered nor re-planned.
-    F05's Definition of done also asks for the second half of that ("still planned"), which
-    would need a ``DECLINED -> ELICITING`` edge in ``domain/trip/component.py`` and an ADR
-    amending the glossary's "``DECLINED`` is terminal"; this test pins what the code does today.
-    """
+    """The client's hard rule: declining answers an *offer*, so nothing offers it again."""
     harness = harness_factory(settings=DialogueSettings(offer_batch=1))
     a_settled_alpha(harness)
     harness.say("no thanks")
 
+    harness.say("a beta in Lisbon")
+    harness.say("1")
+
+    offers = [act for act in harness.every_act() if act.act == OFFER_UNMENTIONED]
+    named = [key for act in offers for key in act.payload["kind_keys"]]
+    assert named.count("beta") == 1
+
+
+def test_a_declined_kind_the_traveller_raises_again_is_planned(
+    harness_factory: HarnessFactory,
+) -> None:
+    """The other half of "decline is about offers, not prohibition" (D18).
+
+    ``DECLINED -> ELICITING`` is the one edge out of ``DECLINED``, and it is walked only here:
+    the traveller raised the Kind themselves, which also marks it mentioned, which is what
+    keeps the never-offered-again rule true without a second rule enforcing it.
+    """
+    harness = harness_factory(settings=DialogueSettings(offer_batch=1))
+    a_settled_alpha(harness)
+    harness.say("no thanks")
+    assert harness.plan.component("beta").status is C.DECLINED
+
     acts = harness.say("a beta in Lisbon")
 
-    assert harness.plan.component("beta").status is C.DECLINED
+    assert acts_of(acts) == [PRESENT_SLATE]
+    assert acts[0].kind_key == "beta"
     assert harness.plan.component("beta").is_mentioned
-    assert OFFER_UNMENTIONED not in acts_of(acts)
-    assert PRESENT_SLATE not in acts_of(acts)
+    assert harness.state is S.AWAITING_CHOICE
+
+    chosen = harness.say("1")
+
+    assert CONFIRM_SELECTION in acts_of(chosen)
+    assert harness.plan.component("beta").status is C.SELECTED
 
 
 def test_a_yes_that_names_one_kind_answers_only_for_that_one(
@@ -853,7 +952,9 @@ def test_a_planner_that_raises_becomes_an_act_and_the_next_agenda_entry(
     assert acts[0].kind_key == "alpha"
     assert acts[0].payload["reason_code"] == "sourcing_failed"
     assert acts[1].kind_key == "beta"
-    assert harness.component("alpha").status is C.FAILED
+    # One failure is not a failed component: `FAILED` is where F02 counts the run, and the
+    # component is only left there once the run reaches `failure_skip` (default 2).
+    assert harness.component("alpha").status is C.ELICITING
     assert harness.component("alpha").consecutive_failures == 1
 
 
@@ -882,6 +983,47 @@ def test_a_kind_that_keeps_failing_is_stepped_over(
     assert acts_of(third) == [PRESENT_SLATE]
     assert third[0].kind_key == "beta"
     assert REPORT_SOURCING_FAILURE not in acts_of(third)
+
+
+def test_a_turn_with_nothing_to_ask_rests_where_it_arrived(
+    harness_factory: HarnessFactory,
+) -> None:
+    """A sourcing failure asks nothing, so it must not leave the session claiming to elicit.
+
+    ``ELICITING_BLOCKING`` is a state the Director enters by *asking*, and F11 and F12 read it.
+    A session sitting there with no Pending Question and no question emitted is a session that
+    says it is waiting for an answer to a question nobody asked.
+    """
+    harness = harness_factory(kinds=(KINDS[0],), planner=RaisingPlanner())
+
+    acts = harness.say("an alpha in Paris 2026-10-23/2026-10-28")
+
+    assert acts_of(acts) == [REPORT_SOURCING_FAILURE, DELIVER_SUMMARY]
+    assert harness.state is S.GREETING
+    assert harness.director.session.pending_question is None
+
+
+def test_eliciting_blocking_is_only_ever_entered_by_asking(
+    harness_factory: HarnessFactory,
+) -> None:
+    """The invariant behind the test above, over a spread of scenarios rather than one."""
+    scripts = (
+        ("an alpha in Paris", "in Paris", "in Paris", "in Paris", "in Paris"),
+        ("an alpha in Paris 2026-10-28/2026-10-23", "still that range"),
+        ("an alpha and a beta in Paris 2026-10-23/2026-10-28", "1", "in Lisbon", "1"),
+        ("an alpha in Paris 2026-10-23/2026-10-28", "cheaper", "goodbye"),
+    )
+    eliciting_acts = {ASK_BLOCKING, REPORT_INVALID_VALUE, CLARIFY}
+    for script in scripts:
+        harness = harness_factory(settings=DialogueSettings(max_reasks=2))
+        for text in script:
+            if harness.session.is_closed:
+                break
+            before = harness.state
+            acts = harness.say(text)
+            entered = harness.state is S.ELICITING_BLOCKING and before is not S.ELICITING_BLOCKING
+            if entered:
+                assert eliciting_acts & set(acts_of(acts)), (script, text, acts_of(acts))
 
 
 def test_an_empty_slate_is_a_sourcing_failure_not_a_choice_of_nothing(
@@ -939,6 +1081,10 @@ def test_small_talk_leaves_the_conversation_where_it_was(
 
     assert harness.say("thanks") == ()
     assert harness.state is S.AWAITING_CHOICE
+    # Pinned for F07: a turn may legitimately produce no Act at all, and the exchange is still
+    # recorded, so a surface that assumes "at least one Act per turn" is the thing that breaks.
+    assert harness.session.transcript[-1].acts == ()
+    assert harness.session.transcript[-1].turn is not None
 
 
 def test_small_talk_in_the_greeting_starts_the_conversation(

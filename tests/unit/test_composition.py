@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from conftest import write_keywords
 
 from tourganize.adapters.catalog.priority import FixedOrderPolicy, WeightedCatalogPolicy
 from tourganize.adapters.catalog.yaml import YamlComponentCatalog
@@ -137,11 +138,15 @@ def test_a_wired_port_is_removed_from_the_pending_list() -> None:
 def test_the_keyword_interpreter_is_pointed_at_the_configured_phrase_tables(
     settings_factory: SettingsFactory,
 ) -> None:
+    """Proved by what it loads rather than by an accessor for the directory it was given."""
     settings = settings_factory()
+    write_keywords(settings.config_dir)
+
     interpreter = build_container(settings).turn_interpreter
 
     assert isinstance(interpreter, KeywordTurnInterpreter)
-    assert interpreter.config_dir == settings.keyword_config_dir
+    assert set(interpreter.tables()) == {"en"}
+    assert interpreter.tables()["en"].kinds
 
 
 def test_asking_for_the_model_interpreter_names_the_feature_that_delivers_it(

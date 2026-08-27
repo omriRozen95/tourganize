@@ -13,7 +13,9 @@ Two things about the shape are worth stating, because they are what make the tab
 turn arrived" *is* — and leaves it for whatever the interpretation implies. So the resting
 states each need exactly one outgoing edge, and the fan-out lives in one row rather than in
 five. A turn that changes nothing returns to the state it came from, which is why
-``INTERPRETING`` can also lead back to each resting state.
+``INTERPRETING`` can also lead back to each resting state — and why ``SOURCING`` and
+``REFINING`` do too: a turn that got as far as asking a planner and came back empty-handed has
+nothing to ask and nothing to offer, and ``ELICITING_BLOCKING`` is entered by *asking*.
 
 **The states between two turns are few.** :data:`RESTING_STATES` names them: those are the
 states a session is ever *observed* in, and everything else — ``INTERPRETING``, ``SOURCING``,
@@ -102,13 +104,17 @@ _TRANSITIONS: Final[dict[DialogueState, frozenset[DialogueState]]] = {
     # Optional filters never block, so this state has exactly one way out and it is forward.
     _S.ELICITING_OPTIONAL: frozenset({_S.AWAITING_CHOICE}),
     # SOURCING to itself: one turn may step past a Component Kind that would not source and
-    # try the next one. ELICITING_BLOCKING because a component whose sourcing failed leaves
-    # the session listening rather than closing it.
+    # try the next one. ELICITING_BLOCKING because the *next* Kind the turn tries may have a
+    # question outstanding. GREETING and AWAITING_CHOICE are the unwind edges: a turn whose
+    # sourcing failed has nothing to ask and nothing to offer, so the session goes back to the
+    # Resting State it arrived in rather than claiming to be eliciting something nobody asked.
     _S.SOURCING: frozenset(
         {
             _S.PRESENTING_SLATE,
             _S.SOURCING,
+            _S.GREETING,
             _S.ELICITING_BLOCKING,
+            _S.AWAITING_CHOICE,
             _S.OFFERING_UNMENTIONED,
             _S.SUMMARISING,
         }
@@ -116,8 +122,9 @@ _TRANSITIONS: Final[dict[DialogueState, frozenset[DialogueState]]] = {
     _S.PRESENTING_SLATE: frozenset({_S.ELICITING_OPTIONAL, _S.AWAITING_CHOICE}),
     _S.AWAITING_CHOICE: frozenset({_S.INTERPRETING}),
     # A refinement may *introduce* a blocking gap by invalidating a value, which is the whole
-    # reason this is a state and not a straight line back into SOURCING.
-    _S.REFINING: frozenset({_S.SOURCING, _S.ELICITING_BLOCKING}),
+    # reason this is a state and not a straight line back into SOURCING. AWAITING_CHOICE is
+    # the unwind edge: a refinement the Director could not act on leaves the slate on the table.
+    _S.REFINING: frozenset({_S.SOURCING, _S.ELICITING_BLOCKING, _S.AWAITING_CHOICE}),
     _S.OFFERING_UNMENTIONED: frozenset({_S.INTERPRETING}),
     _S.SUMMARISING: frozenset({_S.CLOSED}),
     _S.CLOSED: frozenset(),

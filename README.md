@@ -12,7 +12,7 @@ and finally exports a written plan.
 | [docs/roadmap.md](docs/roadmap.md) | The 25 features, their dependency graph and the build order. **Read this first.** |
 | [docs/architecture/overview.md](docs/architecture/overview.md) | Bounded contexts, package layout, ports, the shape of one turn |
 | [docs/architecture/glossary.md](docs/architecture/glossary.md) | The naming authority |
-| [docs/architecture/decisions.md](docs/architecture/decisions.md) | D1–D17: each decision, its cost, and the feature that reverses it |
+| [docs/architecture/decisions.md](docs/architecture/decisions.md) | D1–D18: each decision, its cost, and the feature that reverses it |
 | `tourganize/` | The application |
 | `config/` | Catalog, prompts and messages — data, not code |
 | `tests/` | See [tests/README.md](tests/README.md) for the conventions |

@@ -72,11 +72,6 @@ class KeywordTurnInterpreter:
         self._default_locale = default_locale
         self._tables: Mapping[str, PhraseTable] | None = None
 
-    @property
-    def config_dir(self) -> Path:
-        """Where the phrase tables are read from, for ``doctor`` and error messages."""
-        return self._config_dir
-
     def tables(self) -> Mapping[str, PhraseTable]:
         """The phrase tables, read once and cached.
 

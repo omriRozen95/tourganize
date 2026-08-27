@@ -109,11 +109,11 @@ fields:
 }
 
 
-#: A phrase table for the keyword Turn Interpreter with neutral Component Kinds, matching
-#: :data:`SAMPLE_CATALOG`. Small on purpose — the tables are scaffolding F08 replaces — and
-#: English, because every test utterance is. ``fields`` names the two fields ``alpha.v1``
-#: declares for the shapes this interpreter can read.
-SAMPLE_KEYWORDS: Final = """\
+#: The Component Kinds :data:`SAMPLE_KEYWORDS` raises phrases for — :data:`SAMPLE_CATALOG`'s
+#: three. A suite that declares a different set asks :func:`keyword_table` for one.
+SAMPLE_KEYWORD_KINDS: Final = ("alpha", "beta", "gamma")
+
+_KEYWORDS_TEMPLATE: Final = """\
 locale: en
 intents:
   end_session: [goodbye, "that is all"]
@@ -123,9 +123,7 @@ intents:
   refine: [cheaper, "something else"]
   small_talk: [hello, thanks]
 kinds:
-  alpha: [alpha]
-  beta: [beta]
-  gamma: [gamma]
+{kinds}
 fields:
   place: place
   date_range: date_range
@@ -135,6 +133,22 @@ months:
   october: 10
   november: 11
 """
+
+
+def keyword_table(*kind_keys: str) -> str:
+    """A phrase table for the keyword Turn Interpreter, raising ``kind_keys`` by name.
+
+    One definition, because the table differed between two suites by the single line naming the
+    third Component Kind and was otherwise copied word for word. Small on purpose — the tables
+    are scaffolding F08 replaces — and English, because every test utterance is. ``fields``
+    names the two fields ``alpha.v1`` declares for the shapes this interpreter can read.
+    """
+    declared = kind_keys or SAMPLE_KEYWORD_KINDS
+    return _KEYWORDS_TEMPLATE.format(kinds="\n".join(f"  {key}: [{key}]" for key in declared))
+
+
+#: A phrase table with neutral Component Kinds, matching :data:`SAMPLE_CATALOG`.
+SAMPLE_KEYWORDS: Final = keyword_table()
 
 
 def write_catalog(config_dir: Path, text: str = SAMPLE_CATALOG) -> Path:

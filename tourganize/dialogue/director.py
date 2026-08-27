@@ -35,7 +35,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Final
 
@@ -102,6 +102,43 @@ _LOGGER: Final = logging.getLogger(__name__)
 #: can be sourced. Spelled out rather than inferred, because ``advance_to`` is what says which
 #: edges exist and this is only the shortest legal route to ``SOURCING``.
 _NEEDS_READY: Final = frozenset({ComponentStatus.PENDING, ComponentStatus.ELICITING})
+
+
+@dataclass(frozen=True, slots=True)
+class _AgendaStep:
+    """What one step down the Planning Agenda produced, and whether the session may stop there.
+
+    ``at_rest`` is true when the step said something the traveller is expected to answer, and
+    false when this Component Kind could not be progressed at all — then the next Agenda entry
+    gets its chance in the same turn. It used to travel as the second half of a bare
+    ``tuple[list[AssistantAct], bool]``, which read as ``acts, True`` at the call sites and
+    said nothing about which half meant what.
+    """
+
+    acts: tuple[AssistantAct, ...] = ()
+    at_rest: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _Obligation:
+    """One unsatisfied blocking obligation, and everything there is to say about it.
+
+    Built either from a **Blocking Gap** — nothing satisfies the rule — or from an **Invalid
+    Value** — what would satisfy it cannot be used. Both are attempts on the *same* obligation,
+    which is why they share one Pending Question and one re-ask count: F05's Scope calls
+    ``report_invalid_value`` "a re-ask, not a rejection of the turn", and a re-ask nobody
+    counted is a loop with no exit.
+
+    ``payload`` is the Act's payload without ``attempt``, which :meth:`DialogueDirector._elicit`
+    adds because only it knows the count. ``escalation`` is the ``clarify`` payload used once
+    the count passes ``max_reasks`` and the example is offered instead.
+    """
+
+    rule_name: str
+    field_names: tuple[str, ...]
+    act: str
+    payload: Mapping[str, object]
+    escalation: Mapping[str, object]
 
 
 class DialogueDirector:
@@ -215,7 +252,7 @@ class DialogueDirector:
                 exc_info=exc,
             )
             return None
-        if not isinstance(interpretation, TurnInterpretation):
+        if type(interpretation) is not TurnInterpretation:
             raise ContractViolationError(
                 f"TurnInterpreter {type(self._interpreter).__name__!r} must return a "
                 f"TurnInterpretation, got {interpretation!r}"
@@ -288,9 +325,10 @@ class DialogueDirector:
         if intent is TurnIntent.SMALL_TALK:
             # Nothing was asked for. Outside the greeting there is no Act in the vocabulary
             # that means "acknowledged", and inventing one would be inventing wording, so the
-            # session simply stays where it was. In the greeting, carrying on means starting.
+            # session simply stays where it was and `handle` returns an empty tuple. In the
+            # greeting, carrying on means starting.
             if before is DialogueState.GREETING:
-                return self._plan_next()
+                return self._plan_next(before)
             return self._rest_at(before, [])
         if intent is TurnIntent.REFINE and before is DialogueState.AWAITING_CHOICE:
             return self._refine(interpretation, turn)
@@ -315,6 +353,20 @@ class DialogueDirector:
                 )
                 continue
             self._session.plan.mark_mentioned(kind_key, turn_index)
+            self._reopen_if_declined(kind_key)
+
+    def _reopen_if_declined(self, kind_key: str) -> None:
+        """A declined Component Kind the traveller raises themselves is planned after all.
+
+        Declining answers an *offer*; it is not a prohibition (D18). The client's rule — a
+        declined Kind is never offered again in that session — still holds, and it holds
+        structurally rather than by a second rule of its own: the only way back out of
+        ``DECLINED`` is a mention, a mentioned Kind sits in the Agenda's *mentioned* band, and
+        a Proactive Offer is drawn from the unmentioned band alone.
+        """
+        component = self._session.plan.component(kind_key)
+        if component.status is ComponentStatus.DECLINED:
+            component.advance_to(ComponentStatus.ELICITING)
 
     def _declares(self, kind_key: str) -> bool:
         return any(kind.kind_key == kind_key for kind in self._catalog.enabled_kinds())
@@ -328,14 +380,10 @@ class DialogueDirector:
         target = self._merge_target(interpretation, before)
         if target is None:
             return self._rest_at(before, [self._clarify(CLARIFY_NOT_UNDERSTOOD)])
-        if interpretation.requirement_updates:
-            undeclared = self._merge(target, interpretation.requirement_updates, turn.index)
-            if undeclared is not None:
-                return self._rest_at(
-                    before,
-                    [self._clarify(CLARIFY_UNDECLARED_FIELD, {"field_name": undeclared}, target)],
-                )
-        return self._plan_next()
+        refused = self._merge_or_clarify(target, interpretation, turn)
+        if refused is not None:
+            return self._rest_at(before, [refused])
+        return self._plan_next(before)
 
     def _merge_target(
         self, interpretation: TurnInterpretation, before: DialogueState
@@ -364,6 +412,22 @@ class DialogueDirector:
         plan = self._session.plan
         return plan.has_component(kind_key) and plan.component(kind_key).is_settled
 
+    def _merge_or_clarify(
+        self, kind_key: str, interpretation: TurnInterpretation, turn: UserTurn
+    ) -> AssistantAct | None:
+        """Merge this turn's values into ``kind_key``. An Act back means the merge was refused.
+
+        The same three lines stood in :meth:`_absorb` and in the refinement branch, and the
+        only thing that differed between them was which Resting State the session then went
+        back to — which is the caller's business, not the merge's.
+        """
+        if not interpretation.requirement_updates:
+            return None
+        undeclared = self._merge(kind_key, interpretation.requirement_updates, turn.index)
+        if undeclared is None:
+            return None
+        return self._clarify(CLARIFY_UNDECLARED_FIELD, {"field_name": undeclared}, kind_key)
+
     def _merge(
         self, kind_key: str, updates: Sequence[RequirementUpdate], turn_index: int
     ) -> str | None:
@@ -380,48 +444,50 @@ class DialogueDirector:
         """
         schema = self._catalog.schema_for(kind_key)
         component = self._session.plan.ensure_component(kind_key)
-        held = component.requirements
-        if held is None:
-            held = RequirementSet.empty(kind_key)
         stamped = tuple(replace(update, turn_index=turn_index) for update in updates)
         try:
-            component.requirements = held.with_updates(stamped, schema=schema)
+            component.requirements = _held(component).with_updates(stamped, schema=schema)
         except UnknownFieldError as exc:
-            undeclared = next(
-                (update.field_name for update in stamped if not schema.declares(update.field_name)),
-                "",
-            )
+            # The field name comes off the exception rather than being re-derived by walking
+            # the batch again: the raiser knew it, and a re-derivation that missed would put
+            # an empty `field_name` into a `clarify` payload for a surface to render.
             _LOGGER.warning(
                 "the Turn Interpreter offered a value for %r, which Requirement Schema %s does "
                 "not declare: %s",
-                undeclared,
+                exc.field_name,
                 schema.schema_key,
                 exc,
                 extra={"kind": "dialogue"},
             )
-            return undeclared
+            return exc.field_name
         return None
 
     # -- working down the Agenda ------------------------------------------------------------
 
-    def _plan_next(self, attempted: set[str] | None = None) -> list[AssistantAct]:
+    def _plan_next(
+        self, resting: DialogueState, attempted: set[str] | None = None
+    ) -> list[AssistantAct]:
         """Work down the Planning Agenda until the session comes to rest.
 
         ``attempted`` is the set of Component Kinds this turn has already tried. It is what
         makes the loop terminate: a Kind whose sourcing failed is stepped over for the rest of
         the turn, and the next Agenda entry gets its chance in the same breath — "the
         conversation never dies because a provider did".
+
+        ``resting`` is where the turn arrived from, and it is where the session goes back to if
+        the whole walk finds nothing to say. Carrying it this far down is the price of not
+        inventing a Dialogue State that claims something the turn did not do.
         """
         tried = set() if attempted is None else set(attempted)
         acts: list[AssistantAct] = []
         while True:
             entry = self._next_mentioned_entry(tried)
             if entry is None:
-                return acts + self._offer_or_close()
+                return acts + self._offer_or_close(resting)
             tried.add(entry.kind_key)
-            produced, at_rest = self._work_on(entry.kind_key)
-            acts += produced
-            if at_rest:
+            step = self._work_on(entry.kind_key)
+            acts += step.acts
+            if step.at_rest:
                 return acts
 
     def _next_mentioned_entry(self, attempted: set[str]) -> AgendaEntry | None:
@@ -441,117 +507,90 @@ class DialogueDirector:
             None,
         )
 
-    def _work_on(self, kind_key: str) -> tuple[list[AssistantAct], bool]:
-        """Elicit or source one Plan Component. The boolean is "the session may now rest"."""
+    def _work_on(self, kind_key: str) -> _AgendaStep:
+        """Elicit or source one Plan Component."""
         session = self._session
         session.focus_kind = kind_key
         schema = self._catalog.schema_for(kind_key)
         component = session.plan.ensure_component(kind_key)
-        held = component.requirements
-        if held is None:
-            held = RequirementSet.empty(kind_key)
+        held = _held(component)
         report = analyse(schema, held)
 
         # A value that is present but unusable is told about, not asked for again: the
         # traveller has already answered this, and re-asking would say we were not listening.
+        # It is still an attempt on the same obligation, and it is counted as one.
         if report.blocking_invalid:
-            return self._report_invalid(component, report.blocking_invalid[0]), True
+            invalid = report.blocking_invalid[0]
+            return self._elicit(component, _invalid_obligation(invalid, schema))
         gap = report.next_blocking()
         if gap is not None:
-            return self._ask_blocking(component, gap, schema)
+            return self._elicit(component, _missing_obligation(gap, schema))
         return self._source(component, held, report)
 
-    def _report_invalid(
-        self, component: PlanComponent, invalid: InvalidValue
-    ) -> list[AssistantAct]:
-        """Say which value cannot be used and why, by message key. Sourcing does not start."""
-        self._to_eliciting(component)
-        self._transition(DialogueState.ELICITING_BLOCKING)
-        return [
-            self._act(
-                REPORT_INVALID_VALUE,
-                {
-                    "field_name": invalid.field_name,
-                    "reason_message_key": invalid.reason_message_key,
-                },
-                component.kind_key,
-            )
-        ]
+    def _elicit(self, component: PlanComponent, obligation: _Obligation) -> _AgendaStep:
+        """Say the one thing outstanding about a blocking obligation — or stop saying it.
 
-    def _ask_blocking(
-        self, component: PlanComponent, gap: BlockingGap, schema: RequirementSchema
-    ) -> tuple[list[AssistantAct], bool]:
-        """Ask the one outstanding blocking question — or stop asking it.
+        One question per Act, always, and **every** way of coming back to an obligation counts
+        as an attempt: an ``ask_blocking`` and a ``report_invalid_value`` are two ways of
+        saying the same obligation is unmet. After ``max_reasks`` attempts the field's example
+        is offered instead, and if that does not help either the component is marked ``FAILED``
+        and the Agenda moves on: a conversation that says the same thing for ever is worse than
+        one that admits it cannot plan this component.
 
-        One question per Act, always. After ``max_reasks`` asks on the same Blocking Rule the
-        field's example is offered instead, and if that does not help either the component is
-        marked ``FAILED`` and the Agenda moves on: a conversation that asks the same thing for
-        ever is worse than one that admits it cannot plan this component.
+        The Pending Question is deliberately **kept** when the Director gives up. Clearing it
+        would make the next turn's attempt look like the first one, and the component could
+        re-enter the ask/clarify/fail cycle indefinitely. It is cleared in exactly one place —
+        :meth:`_source`, once a slate has actually arrived.
         """
         session = self._session
         kind_key = component.kind_key
         standing = session.pending_question
-        if standing is not None and standing.is_about(kind_key, gap.rule_name):
+        if standing is not None and standing.is_about(kind_key, obligation.rule_name):
             pending = standing.asked_again(session.turn_index)
         else:
             pending = PendingQuestion(
                 kind_key=kind_key,
-                rule_name=gap.rule_name,
-                field_names=_asked_field_names(gap),
+                rule_name=obligation.rule_name,
+                field_names=obligation.field_names,
                 asked_on_turn=session.turn_index,
             )
         session.pending_question = pending
 
         if pending.attempts > self._settings.max_reasks + 1:
-            session.pending_question = None
-            component.advance_to(ComponentStatus.FAILED)
-            _LOGGER.warning(
-                "giving up on %s: Blocking Rule %r was asked about %s times",
-                kind_key,
-                gap.rule_name,
-                pending.attempts - 1,
-                extra={"kind": "dialogue"},
-            )
-            return [], False
+            self._give_up_on(component, obligation.rule_name, pending.attempts)
+            return _AgendaStep()
 
         self._to_eliciting(component)
         self._transition(DialogueState.ELICITING_BLOCKING)
-        preferred = _preferred_group(gap)
         if pending.attempts > self._settings.max_reasks:
-            return [
-                self._clarify(
-                    CLARIFY_STILL_MISSING,
-                    {
-                        "rule_name": gap.rule_name,
-                        "field_names": preferred.field_names,
-                        "example_message_keys": _example_message_keys(preferred),
-                        "prompt_message_keys": tuple(
-                            spec.prompt_message_key for spec in preferred.missing_fields
-                        ),
-                    },
-                    kind_key,
-                )
-            ], True
-        return [
-            self._act(
-                ASK_BLOCKING,
-                {
-                    "rule_name": gap.rule_name,
-                    "field_groups": gap.field_names,
-                    "preferred_fields": tuple(spec.name for spec in preferred.missing_fields),
-                    "prompt_message_keys": tuple(
-                        spec.prompt_message_key for spec in preferred.missing_fields
-                    ),
-                    "schema_key": schema.schema_key,
-                    "attempt": pending.attempts,
-                },
-                kind_key,
-            )
-        ], True
+            act = self._clarify(CLARIFY_STILL_MISSING, obligation.escalation, kind_key)
+        else:
+            payload = {**obligation.payload, "attempt": pending.attempts}
+            act = self._act(obligation.act, payload, kind_key)
+        return _AgendaStep((act,), at_rest=True)
+
+    def _give_up_on(self, component: PlanComponent, rule_name: str, attempts: int) -> None:
+        """Stop coming back to ``rule_name`` and mark the component ``FAILED``.
+
+        Routed through ``ELICITING`` so that a *second* give-up is a legal move — ``FAILED``
+        has no edge to itself — and so each one is counted. That count is what bounds the whole
+        thing: once the run reaches ``TOURGANIZE_AGENDA_FAILURE_SKIP``, F04's Agenda steps this
+        Component Kind over for good and it is never worked on again.
+        """
+        self._to_eliciting(component)
+        component.advance_to(ComponentStatus.FAILED)
+        _LOGGER.warning(
+            "giving up on %s: Blocking Rule %r was raised %s times (%s failure(s) in a row)",
+            component.kind_key,
+            rule_name,
+            attempts - 1,
+            component.consecutive_failures,
+            extra={"kind": "dialogue"},
+        )
 
     def _source(
         self, component: PlanComponent, held: RequirementSet, report: GapReport
-    ) -> tuple[list[AssistantAct], bool]:
+    ) -> _AgendaStep:
         """Ask the planner for the next round, and present it.
 
         The optional filters ride along with round **zero** and no other, which is the whole of
@@ -567,10 +606,10 @@ class DialogueDirector:
         try:
             slate = self._planner.plan(kind_key, held, session.plan, round_index)
         except Exception as exc:
-            return self._sourcing_failed(component, round_index, exc), False
+            return self._sourcing_failed(component, round_index, exc)
         self._require_slate(slate, kind_key, round_index)
         if not slate.options:
-            return self._sourcing_failed(component, round_index, None), False
+            return self._sourcing_failed(component, round_index, None)
 
         session.plan.record_slate(slate)
         self._transition(DialogueState.PRESENTING_SLATE)
@@ -600,7 +639,7 @@ class DialogueDirector:
                 )
             )
         self._transition(DialogueState.AWAITING_CHOICE)
-        return acts, True
+        return _AgendaStep(tuple(acts), at_rest=True)
 
     def _require_slate(self, slate: object, kind_key: str, round_index: int) -> None:
         """Check the planner's answer at the seam. It is replaceable, so it is not trusted."""
@@ -618,33 +657,45 @@ class DialogueDirector:
 
     def _sourcing_failed(
         self, component: PlanComponent, round_index: int, exc: Exception | None
-    ) -> list[AssistantAct]:
+    ) -> _AgendaStep:
         """Record one sourcing failure and say so, without the exception's English.
 
         The Act carries an opaque code; the reason goes to the log, where an operator reads it.
-        The Agenda counts the run of failures and eventually steps over this Component Kind
-        (``TOURGANIZE_AGENDA_FAILURE_SKIP``), so one broken provider cannot deadlock a session.
+
+        ``FAILED`` is where F02 counts the run of failures, so every failure passes through it —
+        but a component is only *left* there once the run reaches
+        ``TOURGANIZE_AGENDA_FAILURE_SKIP``, which is what F05 asks for: "marks the component
+        ``FAILED`` after the configured attempts". One bad answer from a provider is not a
+        failed component. Below the threshold it goes back to ``ELICITING``, which keeps the
+        count — only a slate or a Selection clears it — and keeps the Kind on the Agenda for the
+        next turn, so one broken provider still cannot deadlock a session.
         """
         component.advance_to(ComponentStatus.FAILED)
+        stalled = component.consecutive_failures >= self._settings.failure_skip
+        if not stalled:
+            component.advance_to(ComponentStatus.ELICITING)
         _LOGGER.warning(
-            "sourcing %s round %s failed (%s in a row): %s",
+            "sourcing %s round %s failed (%s in a row, %s): %s",
             component.kind_key,
             round_index,
             component.consecutive_failures,
+            "stepping the kind over" if stalled else "it will be retried",
             "the slate came back empty" if exc is None else f"{type(exc).__name__}: {exc}",
             extra={"kind": "dialogue"},
         )
-        return [
-            self._act(
-                REPORT_SOURCING_FAILURE,
-                {
-                    "reason_code": SOURCING_FAILED,
-                    "round_index": round_index,
-                    "consecutive_failures": component.consecutive_failures,
-                },
-                component.kind_key,
+        return _AgendaStep(
+            (
+                self._act(
+                    REPORT_SOURCING_FAILURE,
+                    {
+                        "reason_code": SOURCING_FAILED,
+                        "round_index": round_index,
+                        "consecutive_failures": component.consecutive_failures,
+                    },
+                    component.kind_key,
+                ),
             )
-        ]
+        )
 
     # -- the choose-or-refine loop ----------------------------------------------------------
 
@@ -692,7 +743,7 @@ class DialogueDirector:
                 kind_key,
             )
         ]
-        return acts + self._plan_next()
+        return acts + self._plan_next(before)
 
     def _refine(self, interpretation: TurnInterpretation, turn: UserTurn) -> list[AssistantAct]:
         """Re-source the **same** component with the next round index.
@@ -702,27 +753,22 @@ class DialogueDirector:
         sends the machine back to eliciting instead, which is why this goes through
         ``_work_on`` rather than straight to the planner.
         """
+        resting = DialogueState.AWAITING_CHOICE
         kind_key = self._session.focus_kind
         if kind_key is None:  # pragma: no cover - AWAITING_CHOICE always has a focus
-            return self._rest_at(
-                DialogueState.AWAITING_CHOICE, [self._clarify(CLARIFY_NOT_UNDERSTOOD)]
-            )
-        if interpretation.requirement_updates:
-            undeclared = self._merge(kind_key, interpretation.requirement_updates, turn.index)
-            if undeclared is not None:
-                return self._rest_at(
-                    DialogueState.AWAITING_CHOICE,
-                    [self._clarify(CLARIFY_UNDECLARED_FIELD, {"field_name": undeclared}, kind_key)],
-                )
+            return self._rest_at(resting, [self._clarify(CLARIFY_NOT_UNDERSTOOD)])
+        refused = self._merge_or_clarify(kind_key, interpretation, turn)
+        if refused is not None:
+            return self._rest_at(resting, [refused])
         self._transition(DialogueState.REFINING)
-        acts, at_rest = self._work_on(kind_key)
-        if at_rest:
-            return acts
-        return acts + self._plan_next({kind_key})
+        step = self._work_on(kind_key)
+        if step.at_rest:
+            return list(step.acts)
+        return list(step.acts) + self._plan_next(resting, {kind_key})
 
     # -- proactive offers and closing -------------------------------------------------------
 
-    def _offer_or_close(self) -> list[AssistantAct]:
+    def _offer_or_close(self, resting: DialogueState) -> list[AssistantAct]:
         """Offer the Component Kinds nobody raised, or summarise and close.
 
         The gate is the Agenda's own: offers begin only once the mentioned band has emptied, so
@@ -734,9 +780,12 @@ class DialogueDirector:
         if not agenda.is_mentioned_band_empty():
             # Something the traveller raised is still open, so offers are forbidden — but this
             # turn found nothing it could work on either. Reporting where the plan stands is the
-            # only honest thing left in the vocabulary, and it does not close the session.
-            self._transition(DialogueState.ELICITING_BLOCKING)
-            return [self._summary_act()]
+            # only honest thing left in the vocabulary, and it does not close the session. The
+            # session goes back to the Resting State the turn arrived in: `ELICITING_BLOCKING`
+            # is a state the Director enters by *asking*, and claiming it here would leave F11
+            # and F12 reading a session that says it is waiting for an answer to a question
+            # nobody asked.
+            return self._rest_at(resting, [self._summary_act()])
         offerable = tuple(
             entry.kind_key
             for entry in agenda.entries
@@ -787,8 +836,8 @@ class DialogueDirector:
             else:
                 session.plan.decline(kind_key)
         if accepted:
-            return self._plan_next()
-        return self._offer_or_close()
+            return self._plan_next(before)
+        return self._offer_or_close(before)
 
     def _summarise_and_close(self) -> list[AssistantAct]:
         """Report the plan honestly and close. Reachable from every state, by design."""
@@ -852,16 +901,10 @@ class DialogueDirector:
         plan = self._session.plan
         answers: dict[str, bool] = {}
         for kind in self._catalog.enabled_kinds():
-            held = (
-                plan.component(kind.kind_key).requirements
-                if plan.has_component(kind.kind_key)
-                else None
-            )
-            if held is None:
-                held = RequirementSet.empty(kind.kind_key)
-            answers[kind.kind_key] = analyse(
-                self._catalog.schema_for(kind.kind_key), held
-            ).is_plannable
+            key = kind.kind_key
+            component = plan.components.get(key)
+            held = RequirementSet.empty(key) if component is None else _held(component)
+            answers[key] = analyse(self._catalog.schema_for(key), held).is_plannable
         return answers
 
     def _transition(self, target: DialogueState) -> None:
@@ -946,6 +989,84 @@ class DialogueDirector:
                 },
             )
         )
+
+
+def _held(component: PlanComponent) -> RequirementSet:
+    """A component's Requirement Set, empty rather than ``None`` before the first value.
+
+    ``requirements is None`` means "nothing has been said about this yet", and three callers
+    all needed the same two lines to turn that into something ``analyse`` and ``with_updates``
+    can read.
+    """
+    held = component.requirements
+    return RequirementSet.empty(component.kind_key) if held is None else held
+
+
+def _missing_obligation(gap: BlockingGap, schema: RequirementSchema) -> _Obligation:
+    """The obligation a Blocking Gap leaves unmet: nothing satisfies the rule yet."""
+    preferred = _preferred_group(gap)
+    prompts = tuple(spec.prompt_message_key for spec in preferred.missing_fields)
+    return _Obligation(
+        rule_name=gap.rule_name,
+        field_names=_asked_field_names(gap),
+        act=ASK_BLOCKING,
+        payload={
+            "rule_name": gap.rule_name,
+            "field_groups": gap.field_names,
+            "preferred_fields": tuple(spec.name for spec in preferred.missing_fields),
+            "prompt_message_keys": prompts,
+            "schema_key": schema.schema_key,
+        },
+        escalation={
+            "rule_name": gap.rule_name,
+            "field_names": preferred.field_names,
+            "example_message_keys": _example_message_keys(preferred),
+            "prompt_message_keys": prompts,
+        },
+    )
+
+
+def _invalid_obligation(invalid: InvalidValue, schema: RequirementSchema) -> _Obligation:
+    """The obligation a present-but-unusable value fails to satisfy.
+
+    Keyed on the **Blocking Rule** that reads the field rather than on the field itself, so
+    that "you have not said when" and "the range you gave runs backwards" count as attempts on
+    one obligation rather than as two independent loops.
+    """
+    rule_name = _rule_reading(schema, invalid.field_name)
+    spec = schema.field(invalid.field_name)
+    return _Obligation(
+        rule_name=rule_name,
+        field_names=(invalid.field_name,),
+        act=REPORT_INVALID_VALUE,
+        payload={
+            "field_name": invalid.field_name,
+            "reason_message_key": invalid.reason_message_key,
+        },
+        escalation={
+            "rule_name": rule_name,
+            "field_names": (invalid.field_name,),
+            "example_message_keys": (
+                ()
+                if spec is None or spec.example_message_key is None
+                else (spec.example_message_key,)
+            ),
+            "prompt_message_keys": () if spec is None else (spec.prompt_message_key,),
+        },
+    )
+
+
+def _rule_reading(schema: RequirementSchema, field_name: str) -> str:
+    """The Blocking Rule that reads ``field_name``, or the field's own name as a last resort.
+
+    A schema that has been through ``schema_problems`` always has one — a blocking field no
+    rule references is refused at load — but a schema built in code need not have been, and a
+    Pending Question needs *some* stable name to be about.
+    """
+    return next(
+        (rule.name for rule in schema.blocking_rules if field_name in rule.referenced_fields),
+        field_name,
+    )
 
 
 def _asked_field_names(gap: BlockingGap) -> tuple[str, ...]:

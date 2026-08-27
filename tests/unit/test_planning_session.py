@@ -80,7 +80,6 @@ def test_the_transcript_records_the_greeting_that_nobody_prompted() -> None:
     session.record(None, (AssistantAct(act=GREET),))
 
     assert session.transcript[0].turn is None
-    assert session.turns() == ()
     assert [act.act for act in session.acts()] == [GREET]
 
 
@@ -89,7 +88,7 @@ def test_the_transcript_pairs_each_turn_with_the_acts_it_produced() -> None:
     turn = UserTurn(index=0, text="anything", received_at=DEFAULT_MOMENT)
     session.record(turn, (AssistantAct(act=GREET),))
 
-    assert session.turns() == (turn,)
+    assert session.transcript[0].turn is turn
     assert len(session.transcript) == 1
 
 

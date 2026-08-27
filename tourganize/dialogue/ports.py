@@ -2,9 +2,9 @@
 
 Read them from :mod:`tourganize.ports.interpretation`, which re-exports both — that module is
 where the application's ports are listed, and it is the documented import path. They are
-*defined* here for a mechanical reason, and it is the same one that put
-:class:`~tourganize.domain.catalog.prioritization.PriorityPolicy` in the domain (D15): a port's
-contract has to name the types it carries. ``TurnInterpreter`` speaks in
+*defined* here for a mechanical reason, recorded as D17, and it is the same reason D15 gave
+for putting :class:`~tourganize.domain.catalog.prioritization.PriorityPolicy` in the domain: a
+port's contract has to name the types it carries. ``TurnInterpreter`` speaks in
 :class:`~tourganize.dialogue.turns.UserTurn`, :class:`~tourganize.dialogue.states.DialogueState`
 and :class:`~tourganize.dialogue.session.PendingQuestion`, so ``tourganize.ports`` must be able
 to import the dialogue to declare them — and the Director, which consumes the protocols, is
@@ -69,9 +69,14 @@ class TurnInterpreter(Protocol):
 
     The first adapter is keyword-based and deterministic; F08 replaces it with one that calls
     the LLM Gateway, and the Director does not change. An interpreter is a *language* component
-    and nothing else: it never decides what happens next, never touches the Trip Plan, and
-    never resolves a relative date without the ``Clock`` it was built with — "next month" is
-    resolved here, at the boundary, because the domain accepts only resolved values.
+    and nothing else: it never decides what happens next and never touches the Trip Plan.
+
+    **Relative dates are this port's obligation.** The domain accepts only resolved values, so
+    "next month" has to become a date here, at the boundary, against a ``Clock`` — never inside
+    the Director and never inside the domain. The shipped keyword adapter does **not** do it: it
+    offers no value at all for a relative expression rather than a guessed one, which is a gap
+    F08 closes. What the contract forbids is the third option — passing "next month" through as
+    if it were a date.
 
     Raising is allowed. The Director catches it once and asks for clarification; an interpreter
     that raises twice in a row is broken rather than confused, and the exception propagates.

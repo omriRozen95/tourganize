@@ -27,7 +27,6 @@ PACKAGE_ROOT: Final = Path(tourganize.__file__).resolve().parent
 REPO_ROOT: Final = PACKAGE_ROOT.parent
 ROOT_PACKAGE: Final = "tourganize"
 
-PURE_PACKAGES: Final = ("tourganize.domain", "tourganize.dialogue")
 ADAPTERS_PACKAGE: Final = "tourganize.adapters"
 ADAPTER_IMPORTERS: Final = ("tourganize.application.composition",)
 PORTS_PACKAGE: Final = "tourganize.ports"
