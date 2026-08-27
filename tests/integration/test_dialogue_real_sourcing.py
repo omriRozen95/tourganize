@@ -1,26 +1,34 @@
-"""The F05 conversation, driven by F06's **real** Planning Service via the Composition Root.
+"""What real sourcing adds to the conversation, beyond F05's scenarios passing unchanged.
 
-``test_dialogue_walkthrough.py`` drives the same opening against the fake planner and is left
-untouched — that is the point: F05's scenarios pass unchanged when the fake is swapped for the
-real thing, because the Director never learned anything about where options come from.
+That claim itself is tested next door: ``test_dialogue_walkthrough.py`` runs every F05 scenario
+twice, once against the fake planner and once against the real one from the Composition Root,
+with the same assertions both times — which is F06's Definition of done, and it is the
+walkthrough's job rather than this file's.
 
-What is different here is everything below the ``OptionSlatePlanner`` seam. The slates are
-built by :class:`~tourganize.application.planning_service.PlanningService` from the fixture
-tree that ships with the repository, through the ``OptionSource`` port, ranked and filtered,
-and the Director is wired by ``build_container`` rather than by hand. If the wiring is wrong,
-these fail; if the *Director* had to change to accommodate real sourcing, the walkthrough next
-door would fail too, and it does not.
+What is here is the behaviour that only exists once options are real: the slate carries the
+digest of what was asked for, a Selection points at an option that came off disk, a refinement
+re-sources it, a place nobody recorded still answers, and strict filtering that leaves nothing
+becomes a reported failure rather than a dead session. The slates are built by
+:class:`~tourganize.application.planning_service.PlanningService` from the fixture tree that
+ships with the repository, through the ``OptionSource`` port, and the Director is wired by
+``build_container`` rather than by hand. A couple of F05's shapes are re-asserted here too,
+where what is being checked is the data rather than the state machine.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
-from typing import Final
+from typing import Final, final
 
 import pytest
 
-from tourganize.application.composition import build_container, build_dialogue_settings
+from tourganize.application.composition import (
+    Container,
+    build_container,
+    build_dialogue_settings,
+)
 from tourganize.dialogue import (
     ASK_BLOCKING,
     ASK_OPTIONAL,
@@ -31,8 +39,10 @@ from tourganize.dialogue import (
     PRESENT_SLATE,
     REPORT_SOURCING_FAILURE,
     AssistantAct,
+    DialogueContext,
     DialogueDirector,
     DialogueState,
+    TurnInterpretation,
     UserTurn,
 )
 from tourganize.domain.options import OptionSlate
@@ -45,7 +55,8 @@ from tourganize.domain.requirements import (
 from tourganize.domain.trip import ComponentStatus, TripPlan
 from tourganize.platform.errors import ConfigurationError, OptionSourcingError
 from tourganize.platform.settings import Settings
-from tourganize.ports.interpretation import OptionSlatePlanner
+from tourganize.ports.catalog import ComponentCatalog
+from tourganize.ports.interpretation import OptionSlatePlanner, TurnInterpreter
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 SHIPPED_CONFIG: Final = REPO_ROOT / "config"
@@ -65,6 +76,10 @@ def settings_for(tmp_path: Path, **overrides: str) -> Settings:
     return Settings.from_env(environ)
 
 
+#: How a test replaces one of the container's adapters, given the container it was wired into.
+InterpreterFactory = Callable[[Container], TurnInterpreter]
+
+
 class Conversation:
     """A greeted Director built by the Composition Root, and one line per traveller turn."""
 
@@ -73,13 +88,18 @@ class Conversation:
         tmp_path: Path,
         *,
         planner: OptionSlatePlanner | None = None,
+        interpreter: InterpreterFactory | None = None,
         **overrides: str,
     ) -> None:
         self.container = build_container(settings_for(tmp_path, **overrides))
         self.director = DialogueDirector(
             self.container.component_catalog,
             self.container.priority_policy,
-            self.container.turn_interpreter,
+            (
+                interpreter(self.container)
+                if interpreter is not None
+                else self.container.turn_interpreter
+            ),
             planner if planner is not None else self.container.option_slate_planner,
             self.container.clock,
             self.container.telemetry_sink,
@@ -106,7 +126,11 @@ def names(acts: Sequence[AssistantAct]) -> list[str]:
 
 def the_lodging_kind(conversation: Conversation) -> str:
     """The shipped Kind whose schema asks for a place *and* a date range — read, not named."""
-    catalog = conversation.container.component_catalog
+    return lodging_kind_of(conversation.container.component_catalog)
+
+
+def lodging_kind_of(catalog: ComponentCatalog) -> str:
+    """The same question, asked of a catalog that has no conversation around it yet."""
     for kind in catalog.enabled_kinds():
         rules = {rule.name for rule in catalog.schema_for(kind.kind_key).blocking_rules}
         if {"where", "when"} <= rules and kind.requires_outcome_of:
@@ -231,24 +255,69 @@ def test_a_place_nobody_recorded_still_produces_a_slate(tmp_path: Path) -> None:
 def test_strict_filtering_that_empties_the_slate_becomes_a_reported_failure(
     tmp_path: Path,
 ) -> None:
-    """F06's DoD, end to end: strict plus an impossible ceiling is an Act, not a dead session."""
-    conversation = Conversation(tmp_path, TOURGANIZE_OPTION_FILTER_STRICT="true")
-    lodging = the_lodging_kind(conversation)
-    schema = conversation.container.component_catalog.schema_for(lodging)
-    conversation.say("find me a hotel in Paris")
-    conversation.say("23-28 October 2026")
+    """F06's DoD, end to end: strict plus an impossible ceiling is an Act, not a dead session.
 
-    component = conversation.director.session.plan.component(lodging)
-    held = component.requirements
-    assert held is not None
-    impossible = held.with_updates([_impossible_ceiling(schema)], schema=schema)
+    Driven through the Director, because the DoD is about what the *conversation* does — "the
+    slate is empty **and** the Director emits ``report_sourcing_failure``" — and a planner
+    called directly can only show the first half of that.
 
-    slate = conversation.container.option_slate_planner.plan(
-        lodging, impossible, conversation.director.session.plan, 1
+    The soft conversation is the control: the same turns and the same impossible ceiling, and a
+    slate comes back marked. Without it, an empty fixture tree would pass this test just as
+    happily as strict filtering does.
+    """
+    soft, marked = _the_dates_turn(tmp_path)
+    strict, refused = _the_dates_turn(tmp_path, TOURGANIZE_OPTION_FILTER_STRICT="true")
+    lodging = the_lodging_kind(strict)
+
+    assert names(marked)[0] == PRESENT_SLATE, "the ceiling alone must not empty the slate"
+    assert soft.director.session.plan.component(lodging).latest_slate() is not None
+    shown = marked[0].payload["options"]
+    assert isinstance(shown, tuple)
+    assert shown and all(option["filter_notes"] for option in shown), "demoted, and marked"
+
+    assert names(refused)[0] == REPORT_SOURCING_FAILURE
+    assert strict.director.session.plan.component(lodging).latest_slate() is None
+    assert strict.director.session.state is not DialogueState.CLOSED
+
+
+def _the_dates_turn(
+    tmp_path: Path, **overrides: str
+) -> tuple[Conversation, tuple[AssistantAct, ...]]:
+    """Open the Paris conversation with an impossible budget, and answer the blocking question."""
+    conversation = Conversation(
+        tmp_path, interpreter=_also_offering_an_impossible_ceiling, **overrides
     )
+    conversation.say("find me a hotel in Paris")
+    return conversation, conversation.say("23-28 October 2026")
 
-    assert slate.options == ()
-    assert "filtered_out" in slate.diagnostics
+
+def _also_offering_an_impossible_ceiling(container: Container) -> TurnInterpreter:
+    """The wired interpreter, plus the one value its phrase table cannot read."""
+    catalog = container.component_catalog
+    schema = catalog.schema_for(lodging_kind_of(catalog))
+    return _AlsoOffering(container.turn_interpreter, _impossible_ceiling(schema))
+
+
+@final
+class _AlsoOffering:
+    """The real interpreter, with one Requirement Update added to whatever it read.
+
+    The keyword interpreter is F05's deliberate stand-in and reads no money at all, so "under
+    €1 a night" is not something a traveller can say to it until F08 arrives. This offers that
+    value the way an extracting interpreter would have, on any turn whose focused schema
+    declares the field, and leaves everything else — which Kind was raised, which option was
+    chosen, which locale is in force — to the adapter the Composition Root wired.
+    """
+
+    def __init__(self, inner: TurnInterpreter, update: RequirementUpdate) -> None:
+        self._inner = inner
+        self._update = update
+
+    def interpret(self, turn: UserTurn, context: DialogueContext) -> TurnInterpretation:
+        read = self._inner.interpret(turn, context)
+        if self._update.field_name not in context.focus_field_names:
+            return read
+        return replace(read, requirement_updates=(*read.requirement_updates, self._update))
 
 
 def _impossible_ceiling(schema: RequirementSchema) -> RequirementUpdate:

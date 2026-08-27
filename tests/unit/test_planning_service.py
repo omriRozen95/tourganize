@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from datetime import timedelta
 from pathlib import Path
+from threading import Event
+from time import monotonic
 from typing import Final
 
 import pytest
@@ -492,6 +495,90 @@ def test_a_source_inside_its_budget_is_used(option_factory: OptionFactory) -> No
     assert slate.diagnostics == ()
 
 
+class _HangingSource:
+    """A source that does not answer at all until the test lets it go.
+
+    ``_SlowSource`` simulates latency by moving the Clock, which is what a recorded
+    conversation does; this one really blocks the thread it is called on, which is what a
+    provider whose socket never closes does. Only the second kind proves the budget *bounds*
+    the call rather than describing it afterwards.
+    """
+
+    def __init__(self) -> None:
+        self.released = Event()
+
+    @property
+    def source_id(self) -> str:
+        return "fake:hanging"
+
+    @property
+    def kind_keys(self) -> frozenset[str]:
+        return frozenset({KIND})
+
+    def search(self, query: OptionQuery) -> OptionSourceResult:
+        del query
+        self.released.wait(30)  # bounded, so a broken test cannot wedge the suite forever
+        return OptionSourceResult(options=(), source_id=self.source_id, retrieved_at=DEFAULT_MOMENT)
+
+
+class _ExitingSource:
+    """A source that leaves without answering and without raising anything catchable."""
+
+    @property
+    def source_id(self) -> str:
+        return "fake:exiting"
+
+    @property
+    def kind_keys(self) -> frozenset[str]:
+        return frozenset({KIND})
+
+    def search(self, query: OptionQuery) -> OptionSourceResult:
+        del query
+        raise SystemExit("a source that calls it a day")
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_a_source_that_ends_without_answering_is_a_source_that_failed(
+    option_factory: OptionFactory,
+) -> None:
+    """``SystemExit`` is not an ``Exception`` and is not caught. It is still a failed source.
+
+    The warning being ignored is pytest's own report that a thread ended on an exception —
+    which is exactly what this test arranges, and what the service is being asked to survive.
+    """
+    quick = RecordedOptionSource(
+        {KIND: [option_factory("a2", price=Money(20000, "EUR"))]}, DEFAULT_MOMENT
+    )
+
+    slate = service([_ExitingSource(), quick]).plan(KIND, requirements(place="Paris"), a_plan(), 0)
+
+    assert [option.option_id for option in slate.options] == ["a2"]
+    assert "source_failed:fake:exiting" in slate.diagnostics
+
+
+def test_a_source_that_never_answers_is_abandoned_at_its_deadline(
+    option_factory: OptionFactory,
+) -> None:
+    """The budget stops a hung source. Without this, one provider holds the turn open forever."""
+    hanging = _HangingSource()
+    quick = RecordedOptionSource(
+        {KIND: [option_factory("a2", price=Money(20000, "EUR"))]}, DEFAULT_MOMENT
+    )
+    planner = service([hanging, quick], timeout_seconds=0.25)
+
+    started = monotonic()
+    try:
+        slate = planner.plan(KIND, requirements(place="Paris"), a_plan(), 0)
+        elapsed = monotonic() - started
+
+        assert not hanging.released.is_set(), "the source is still hanging, by construction"
+        assert elapsed < 5.0, f"the turn waited {elapsed:.1f}s on a source it should have left"
+        assert [option.option_id for option in slate.options] == ["a2"]
+        assert "source_timed_out:fake:hanging" in slate.diagnostics
+    finally:
+        hanging.released.set()
+
+
 # -- the seams that are checked rather than trusted ------------------------------------------------
 
 
@@ -516,23 +603,48 @@ class _WrongKindSource:
         )
 
 
-def test_a_source_answering_about_another_component_kind_is_refused_at_the_seam(
+def test_a_source_answering_about_another_component_kind_is_skipped(
+    option_factory: OptionFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A source that breaks its contract is a source that failed: logged, recorded, skipped."""
+    broken = _WrongKindSource([option_factory("b1", "beta")])
+    working = RecordedOptionSource(
+        {KIND: [option_factory("a1", price=Money(10000, "EUR"))]}, DEFAULT_MOMENT
+    )
+
+    with caplog.at_level(logging.WARNING):
+        slate = service([broken, working]).plan(KIND, requirements(place="Paris"), a_plan(), 0)  # type: ignore[list-item]
+
+    assert [option.option_id for option in slate.options] == ["a1"]
+    assert "source_failed:fake:wrong_kind" in slate.diagnostics
+    assert "another Component Kind" in caplog.text
+
+
+def test_a_source_returning_more_than_it_was_asked_for_is_skipped(
     option_factory: OptionFactory,
 ) -> None:
-    source = _WrongKindSource([option_factory("b1", "beta")])
+    broken = _WrongKindSource([option_factory(f"a{position}") for position in range(20)])
+    working = RecordedOptionSource(
+        {KIND: [option_factory("kept", price=Money(10000, "EUR"))]}, DEFAULT_MOMENT
+    )
 
-    with pytest.raises(ContractViolationError, match="another Component Kind"):
-        service([source]).plan(KIND, requirements(place="Paris"), a_plan(), 0)  # type: ignore[list-item]
+    slate = service([broken, working], slate_size=1).plan(  # type: ignore[list-item]
+        KIND, requirements(place="Paris"), a_plan(), 0
+    )
+
+    assert [option.option_id for option in slate.options] == ["kept"]
+    assert "source_failed:fake:wrong_kind" in slate.diagnostics
 
 
-def test_a_source_returning_more_than_it_was_asked_for_is_refused(
+def test_every_source_breaking_its_contract_is_every_source_failing(
     option_factory: OptionFactory,
 ) -> None:
-    options = [option_factory(f"a{position}") for position in range(20)]
-    source = _WrongKindSource(options)
+    """Degrading needs a survivor. With none, this is the case that raises, like any other."""
+    broken = _WrongKindSource([option_factory("b1", "beta")])
 
-    with pytest.raises(ContractViolationError, match="at most"):
-        service([source], slate_size=1).plan(KIND, requirements(place="Paris"), a_plan(), 0)  # type: ignore[list-item]
+    with pytest.raises(OptionSourcingError, match="every Option Source"):
+        service([broken]).plan(KIND, requirements(place="Paris"), a_plan(), 0)  # type: ignore[list-item]
 
 
 class _InventingRanking:

@@ -11,11 +11,18 @@ test with a hand-built catalog can.
 The travel topics are read *out of the shipped catalog* rather than written down here, for the
 same reason ``test_cli_subprocess.py`` reads them: this suite must not become the second place a
 ``kind_key`` is hardcoded.
+
+Every scenario runs **twice**: once against F05's fake planner, and once against F06's real
+Planning Service as the Composition Root wires it, over the fixture tree that ships with the
+repository. That is F06's Definition of done — "the F05 scenario suite passes unchanged with the
+fake planner swapped for the real one" — and it is worth more than a second suite next door
+asserting something similar, because the assertions are literally the same ones: if real
+sourcing had made the Director behave differently, these would say so.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Final
 
@@ -27,6 +34,7 @@ from tourganize.adapters.clock.fake import DEFAULT_MOMENT, FrozenClock
 from tourganize.adapters.interpretation.keyword import KeywordTurnInterpreter
 from tourganize.adapters.options.fake import FixedSlatePlanner
 from tourganize.adapters.telemetry.null import NullTelemetrySink
+from tourganize.application.composition import build_container
 from tourganize.dialogue import (
     ASK_BLOCKING,
     ASK_OPTIONAL,
@@ -43,11 +51,48 @@ from tourganize.dialogue import (
     UserTurn,
 )
 from tourganize.domain.trip import ComponentStatus
+from tourganize.platform.settings import Settings
+from tourganize.ports.interpretation import OptionSlatePlanner
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
-SHIPPED_CATALOG: Final = REPO_ROOT / "config" / "catalog" / "components.yaml"
-SHIPPED_SCHEMAS: Final = REPO_ROOT / "config" / "catalog" / "schemas"
-SHIPPED_KEYWORDS: Final = REPO_ROOT / "config" / "interpretation"
+SHIPPED_CONFIG: Final = REPO_ROOT / "config"
+SHIPPED_CATALOG: Final = SHIPPED_CONFIG / "catalog" / "components.yaml"
+SHIPPED_SCHEMAS: Final = SHIPPED_CONFIG / "catalog" / "schemas"
+SHIPPED_KEYWORDS: Final = SHIPPED_CONFIG / "interpretation"
+SHIPPED_FIXTURES: Final = REPO_ROOT / "fixtures" / "options"
+
+#: How the Director's planner is built, given the clock the conversation is driven with.
+PlannerFactory = Callable[[FrozenClock], OptionSlatePlanner]
+
+
+@pytest.fixture(params=["fake", "real"])
+def planner(request: pytest.FixtureRequest, tmp_path: Path) -> PlannerFactory:
+    """F05's fake planner, and F06's real Planning Service from the Composition Root.
+
+    Below the ``OptionSlatePlanner`` seam the two share nothing: one manufactures a slate from
+    the query it was handed, the other reads the shipped fixture tree through the
+    ``OptionSource`` port, merges, filters, ranks and truncates it. Above the seam the Director
+    cannot tell them apart, which is the claim every scenario in this file now tests twice.
+    """
+    if request.param == "fake":
+        return FixedSlatePlanner
+    container = build_container(
+        Settings.from_env(
+            {
+                "TOURGANIZE_ENV": "test",
+                "TOURGANIZE_CONFIG_DIR": str(SHIPPED_CONFIG),
+                "TOURGANIZE_FIXTURE_DIR": str(SHIPPED_FIXTURES),
+                "TOURGANIZE_DATA_DIR": str(tmp_path / "var"),
+                "TOURGANIZE_TELEMETRY_SINK": "null",
+            }
+        )
+    )
+
+    def wired(clock: FrozenClock) -> OptionSlatePlanner:
+        del clock  # the container built its own; this one drives the transcript, not the sources
+        return container.option_slate_planner
+
+    return wired
 
 
 def shipped_kinds_by_weight() -> list[str]:
@@ -75,13 +120,13 @@ def the_lodging_kind() -> str:
 class Walkthrough:
     """A greeted Director over the shipped configuration, and one line per traveller turn."""
 
-    def __init__(self, *, offer_batch: int = 2) -> None:
+    def __init__(self, planner: PlannerFactory, *, offer_batch: int = 2) -> None:
         self.clock = FrozenClock(DEFAULT_MOMENT)
         self.director = DialogueDirector(
             YamlComponentCatalog(SHIPPED_CATALOG, SHIPPED_SCHEMAS),
             WeightedCatalogPolicy(),
             KeywordTurnInterpreter(SHIPPED_KEYWORDS),
-            FixedSlatePlanner(self.clock),
+            planner(self.clock),
             self.clock,
             NullTelemetrySink(),
             DialogueSettings(offer_batch=offer_batch),
@@ -114,10 +159,12 @@ def test_the_shipped_phrase_tables_load() -> None:
     assert tables["he"].kinds
 
 
-def test_the_paris_hotel_opening_asks_for_the_dates_and_then_presents_a_slate() -> None:
+def test_the_paris_hotel_opening_asks_for_the_dates_and_then_presents_a_slate(
+    planner: PlannerFactory,
+) -> None:
     """F05's first scenario, on the shipped files: a question, no slate; then a slate."""
     lodging = the_lodging_kind()
-    walkthrough = Walkthrough()
+    walkthrough = Walkthrough(planner)
 
     first = walkthrough.say("find me a hotel in Paris")
 
@@ -135,10 +182,10 @@ def test_the_paris_hotel_opening_asks_for_the_dates_and_then_presents_a_slate() 
     assert str(held.value_of("date_range")) == "2026-10-23/2026-10-28"
 
 
-def test_mentioned_first_end_to_end_on_the_act_sequence() -> None:
+def test_mentioned_first_end_to_end_on_the_act_sequence(planner: PlannerFactory) -> None:
     """The Kind the traveller raised is planned before any other Kind is even offered."""
     lodging = the_lodging_kind()
-    walkthrough = Walkthrough()
+    walkthrough = Walkthrough(planner)
     walkthrough.say("find me a hotel in Paris")
     walkthrough.say("23-28 October 2026")
     walkthrough.say("2")
@@ -150,13 +197,13 @@ def test_mentioned_first_end_to_end_on_the_act_sequence() -> None:
     assert walkthrough.director.session.plan.component(lodging).status is ComponentStatus.SELECTED
 
 
-def test_the_first_offer_names_the_top_ranked_unmentioned_kind() -> None:
+def test_the_first_offer_names_the_top_ranked_unmentioned_kind(planner: PlannerFactory) -> None:
     """The Priority Policy's answer, seen through the dialogue: heaviest unmentioned first."""
     heaviest_first = shipped_kinds_by_weight()
     lodging = the_lodging_kind()
     expected = next(key for key in heaviest_first if key != lodging)
 
-    walkthrough = Walkthrough(offer_batch=1)
+    walkthrough = Walkthrough(planner, offer_batch=1)
     walkthrough.say("find me a hotel in Paris")
     walkthrough.say("23-28 October 2026")
     walkthrough.say("2")
@@ -166,9 +213,9 @@ def test_the_first_offer_names_the_top_ranked_unmentioned_kind() -> None:
     assert offered.payload["kind_keys"] == (expected,)
 
 
-def test_declining_every_offer_leads_to_the_summary_then_close() -> None:
+def test_declining_every_offer_leads_to_the_summary_then_close(planner: PlannerFactory) -> None:
     remaining = len(shipped_kinds_by_weight()) - 1
-    walkthrough = Walkthrough(offer_batch=1)
+    walkthrough = Walkthrough(planner, offer_batch=1)
     walkthrough.say("find me a hotel in Paris")
     walkthrough.say("23-28 October 2026")
     walkthrough.say("2")
@@ -183,8 +230,10 @@ def test_declining_every_offer_leads_to_the_summary_then_close() -> None:
     assert len(closing[0].payload["declined"]) == remaining
 
 
-def test_the_whole_walkthrough_starts_with_a_greeting_and_says_nothing_twice() -> None:
-    walkthrough = Walkthrough()
+def test_the_whole_walkthrough_starts_with_a_greeting_and_says_nothing_twice(
+    planner: PlannerFactory,
+) -> None:
+    walkthrough = Walkthrough(planner)
     walkthrough.say("find me a hotel in Paris")
     walkthrough.say("23-28 October 2026")
     walkthrough.say("cheaper")
@@ -198,9 +247,9 @@ def test_the_whole_walkthrough_starts_with_a_greeting_and_says_nothing_twice() -
     assert sequence[-2:] == [DELIVER_SUMMARY, CLOSE]
 
 
-def test_a_hebrew_turn_switches_the_locale_of_every_act() -> None:
+def test_a_hebrew_turn_switches_the_locale_of_every_act(planner: PlannerFactory) -> None:
     """Hebrew is a first-class content language from the first turn, and Acts carry the locale."""
-    walkthrough = Walkthrough()
+    walkthrough = Walkthrough(planner)
     acts = walkthrough.say("מלון")
 
     assert walkthrough.director.session.locale == "he"
@@ -209,8 +258,10 @@ def test_a_hebrew_turn_switches_the_locale_of_every_act() -> None:
 
 
 @pytest.mark.parametrize("utterance", ["", "?!", "tell me a joke"])
-def test_a_turn_nobody_can_read_never_ends_the_conversation(utterance: str) -> None:
-    walkthrough = Walkthrough()
+def test_a_turn_nobody_can_read_never_ends_the_conversation(
+    utterance: str, planner: PlannerFactory
+) -> None:
+    walkthrough = Walkthrough(planner)
     walkthrough.say(utterance)
 
     assert walkthrough.director.session.state is not DialogueState.CLOSED

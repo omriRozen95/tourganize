@@ -18,6 +18,7 @@ from tourganize.domain.errors import UnknownComponentKindError
 from tourganize.domain.options import Money, PlanOption
 from tourganize.domain.options.query import OptionQuery
 from tourganize.domain.requirements import RequirementSet
+from tourganize.platform.errors import ConfigurationError
 from tourganize.platform.settings import OptionSourceProfile
 from tourganize.ports.options import OptionRanking, OptionSource, OptionSourceRegistry
 
@@ -77,8 +78,12 @@ def test_a_profile_with_nothing_wired_behind_it_is_a_configuration_bug() -> None
 
 
 def test_registering_the_same_source_twice_is_refused() -> None:
-    """De-duplication would hide it, and every option would have been counted twice."""
-    with pytest.raises(UnknownComponentKindError, match="repeats a source_id"):
+    """De-duplication would hide it, and every option would have been counted twice.
+
+    A ``ConfigurationError`` and not an ``UnknownComponentKindError``: no ``kind_key`` is
+    involved, and the glossary reserves that error for a Kind the catalog does not declare.
+    """
+    with pytest.raises(ConfigurationError, match="repeats a source_id"):
         SourceRegistry(
             OptionSourceProfile(), {"fixture": (a_recorded_source(), a_recorded_source())}
         )

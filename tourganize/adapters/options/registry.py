@@ -23,6 +23,7 @@ from collections.abc import Mapping, Sequence
 from typing import final
 
 from tourganize.domain.errors import UnknownComponentKindError
+from tourganize.platform.errors import ConfigurationError
 from tourganize.platform.settings import OptionSourceProfile, SourceProfileName
 from tourganize.ports.options import OptionSource
 
@@ -43,7 +44,12 @@ class SourceRegistry:
         for name, items in self._sources.items():
             identifiers = [source.source_id for source in items]
             if len(set(identifiers)) != len(identifiers):
-                raise UnknownComponentKindError(
+                # A `ConfigurationError`, and not the `UnknownComponentKindError` a missing
+                # source raises: no `kind_key` is involved here at all. The glossary reserves
+                # that error for a Kind, and a Source Profile that names the same provider
+                # twice is a wiring mistake in the installation — exit code 3, like every
+                # other configuration that cannot be resolved.
+                raise ConfigurationError(
                     f"the {name!r} Source Profile registers {', '.join(identifiers)}, which "
                     f"repeats a source_id: every option would be counted twice"
                 )

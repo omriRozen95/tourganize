@@ -189,13 +189,20 @@ judgement that could have gone the other way and is defended here on its merits.
   would be *choosing* the slate and every replaceable piece below it would be decoration: "cheapest
   first" would be a sort of three arbitrary rows. `slate_size` on the query is therefore the
   candidate count the port promises to honour, and the *slate* is truncated to the setting.
-- *(implementer's choice)* **The per-source timeout is enforced after the call, not by cancelling
-  it.** Pre-emptive cancellation of a synchronous call needs a thread per source, which buys nothing
-  for a provider that reads a file and would make a frozen-clock replay depend on real elapsed time.
-  A source that talks to a network is expected to hold its own transport to the budget (F17 and F24
-  both pass it to their client); this check is the backstop that stops a source which ignores it from
-  holding a conversation open. A source that overruns is counted as failed, so *all* of them
-  overrunning is `OptionSourcingError`, exactly as all of them raising is.
+- *(implementer's choice)* **The per-source timeout bounds the call with a watchdog thread.**
+  `search` runs on one worker and the service waits at most
+  `TOURGANIZE_OPTION_SOURCE_TIMEOUT_SECONDS` for it; a source that hangs is abandoned, whatever it
+  eventually produces is discarded, and the slate is built from the survivors. Measuring the elapsed
+  time *after* `search` returns can only describe a source that has already come back, so a provider
+  that never does would hold a traveller's turn open for as long as it liked — which is the one
+  thing the setting exists to prevent. This is not the parallel fan-out
+  [D5](../architecture/decisions.md) forbids: exactly one source is in flight at a time, the next is
+  not asked until this one is finished with, and the `OptionSource` protocol stays synchronous, so no
+  adapter learns that a watchdog exists. The budget is checked a second time against the injected
+  `Clock` once the call is back, because that is the clock a source with a recorded or simulated
+  latency moves, and a replay should see the latency it was recorded with. A source that overruns
+  either check is counted as failed, so *all* of them overrunning is `OptionSourcingError`, exactly
+  as all of them raising is.
 - *(implementer's choice)* **`OptionSlate` gained a `diagnostics` field.** Scope item 5 asks for "an
   empty slate with `diagnostics`" and F02's type had nowhere to put them. Opaque codes, like an
   Agenda Reason Code — `synthesised:fixture`, `source_failed:world`, `filtered_out` — because "here

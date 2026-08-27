@@ -19,7 +19,9 @@ Three properties are load-bearing.
 Code backend is one process per call and a subscription has rate limits — and a design that
 quietly relies on concurrency in one place is a design that cannot be moved onto a serial
 transport later. The port promises nothing either way, so a future source that *permits*
-concurrency can have it; nothing above this method may assume it.
+concurrency can have it; nothing above this method may assume it. The watchdog thread each
+call is bounded with is not fan-out: exactly one source is in flight at any moment, and the
+next one is not asked until the previous has answered or been abandoned.
 
 **An empty slate is an answer, not an exception.** Zero options after merging returns an empty
 :class:`~tourganize.domain.options.option.OptionSlate` carrying diagnostics, and F05 already
@@ -38,7 +40,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from contextvars import copy_context
+from dataclasses import dataclass
 from datetime import datetime
+from threading import Thread
 from typing import Final, final
 
 from tourganize.dialogue import DEFAULT_LOCALE
@@ -86,6 +91,35 @@ FILTERED_OUT: Final = "filtered_out"
 
 #: The diagnostic recorded when the sources agreed on an empty answer without failing.
 NOTHING_FOUND: Final = "nothing_found"
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class _Attempt:
+    """One bounded call to one Option Source: its answer, or why there is not one.
+
+    ``result`` is ``None`` exactly when the source did not answer usably, and ``failure`` then
+    names the diagnostic the slate carries. Both are needed because the service has to do two
+    things with a source that failed — skip it, and say that it did.
+    """
+
+    result: OptionSourceResult | None
+    failure: str = SOURCE_FAILED
+
+    @staticmethod
+    def answered(result: OptionSourceResult) -> _Attempt:
+        """The source answered, in time and within its contract."""
+        return _Attempt(result)
+
+    @staticmethod
+    def failed() -> _Attempt:
+        """The source raised, ended without answering, or broke the ``OptionSource`` contract."""
+        return _Attempt(None, SOURCE_FAILED)
+
+    @staticmethod
+    def timed_out() -> _Attempt:
+        """The source was abandoned at its deadline, or reported having overrun it."""
+        return _Attempt(None, SOURCE_TIMED_OUT)
 
 
 @final
@@ -192,24 +226,21 @@ class PlanningService:
     ) -> tuple[tuple[OptionSourceResult, ...], tuple[str, ...], int]:
         """Call every source for this Kind, serially, and collect what survives.
 
-        A source that raises or overruns its budget is logged, recorded as a diagnostic and
-        skipped. Only when every one of them fails is there nothing left to answer with, and
-        that is the one case that raises.
+        A source that raises, hangs past its budget or breaks the ``OptionSource`` contract is
+        logged, recorded as a diagnostic and skipped — all three are one thing here, a source
+        that did not answer usably. Only when every one of them fails is there nothing left to
+        answer with, and that is the one case that raises.
         """
         sources = self._registry.sources_for(query.kind_key)
         results: list[OptionSourceResult] = []
         diagnostics: list[str] = []
         failures = 0
         for source in sources:
-            outcome = self._search_one(source, query)
-            if outcome is None:
+            attempt = self._search_one(source, query)
+            result = attempt.result
+            if result is None:
                 failures += 1
-                diagnostics.append(f"{SOURCE_FAILED}:{source.source_id}")
-                continue
-            result, overran = outcome
-            if overran:
-                failures += 1
-                diagnostics.append(f"{SOURCE_TIMED_OUT}:{source.source_id}")
+                diagnostics.append(f"{attempt.failure}:{source.source_id}")
                 continue
             results.append(result)
             diagnostics += [f"{code}:{result.source_id}" for code in result.diagnostics]
@@ -220,32 +251,89 @@ class PlanningService:
             )
         return tuple(results), tuple(diagnostics), failures
 
-    def _search_one(
-        self, source: OptionSource, query: OptionQuery
-    ) -> tuple[OptionSourceResult, bool] | None:
-        """One source's answer and whether it overran, or ``None`` when it raised.
+    def _search_one(self, source: OptionSource, query: OptionQuery) -> _Attempt:
+        """One source's answer, or the diagnostic that says why there is none.
 
-        The budget is enforced *after* the fact rather than by cancelling the call. Cancelling a
-        synchronous call needs a thread per source, which buys nothing for a provider that reads
-        a file and would make the frozen-clock replay of a recorded conversation depend on real
-        elapsed time. A source that talks to a network is expected to hold its own transport to
-        the same budget — F17 and F24 both pass it to their client — and this check is the
-        backstop that keeps a source which ignores it from holding a conversation open.
+        The budget **bounds the call** rather than describing it afterwards. ``search`` runs on
+        one worker thread and the service waits at most
+        ``TOURGANIZE_OPTION_SOURCE_TIMEOUT_SECONDS`` for it; a source that hangs is abandoned
+        and the conversation carries on with whatever the other sources said. Measuring the
+        elapsed time once ``search`` has returned — which is what this did first — can only
+        describe a source that already came back, so a provider that never does would hold a
+        traveller's turn open for as long as it liked.
+
+        This is not the parallel fan-out D5 forbids: one source is in flight at a time, the
+        next is not asked until this one is finished with, and the ``OptionSource`` protocol
+        stays synchronous, so no adapter learns that a watchdog exists. The abandoned thread is
+        a daemon and cannot keep the process alive; whatever it eventually produces is appended
+        to a list nobody reads again, so it can neither corrupt the slate that was built without
+        it nor be mistaken for a late answer. The call carries a copy of the current
+        :func:`~tourganize.platform.logging.log_context`, so a source that logs is still
+        correlated with the turn that asked it.
+
+        The budget is checked a second time against the injected ``Clock`` once the call is
+        back, because that is the clock a source with a simulated or recorded latency moves: a
+        provider that reports having taken longer than its budget is skipped exactly as one
+        that hung is, and a replayed conversation sees the latency it was recorded with rather
+        than the one the replay happens to take.
         """
         started_at = self._clock.now()
-        try:
-            result = source.search(query)
-        except Exception as exc:  # a source may raise anything at all; none of it ends a turn
+        answers: list[object] = []
+        failures: list[Exception] = []
+        context = copy_context()
+
+        def call() -> None:
+            try:
+                answers.append(context.run(source.search, query))
+            except Exception as exc:  # a source may raise anything; none of it ends a turn
+                failures.append(exc)
+
+        worker = Thread(target=call, name=f"option-source:{source.source_id}", daemon=True)
+        worker.start()
+        worker.join(self._timeout_seconds)
+        if worker.is_alive():
+            _LOGGER.warning(
+                "option source %s did not answer for %s within %.3fs: abandoning it",
+                source.source_id,
+                query.kind_key,
+                self._timeout_seconds,
+                extra={"kind": "sourcing"},
+            )
+            return _Attempt.timed_out()
+        if failures:
             _LOGGER.warning(
                 "option source %s failed for %s: %s: %s",
                 source.source_id,
                 query.kind_key,
-                type(exc).__name__,
+                type(failures[0]).__name__,
+                failures[0],
+                extra={"kind": "sourcing"},
+            )
+            return _Attempt.failed()
+        if not answers:
+            # The worker finished having left neither an answer nor an exception, which takes
+            # a source raising something that is not an `Exception` at all. It did not answer;
+            # that is all this needs to know about it.
+            _LOGGER.warning(
+                "option source %s ended without answering for %s",
+                source.source_id,
+                query.kind_key,
+                extra={"kind": "sourcing"},
+            )
+            return _Attempt.failed()
+        try:
+            result = self._require_result(source, answers[0], query)
+        except ContractViolationError as exc:
+            # A source that breaks its contract is a source that failed, not the end of a
+            # turn: the check still says so in full, and the survivors still answer.
+            _LOGGER.warning(
+                "option source %s broke the OptionSource contract for %s: %s",
+                source.source_id,
+                query.kind_key,
                 exc,
                 extra={"kind": "sourcing"},
             )
-            return None
-        self._require_result(source, result, query)
+            return _Attempt.failed()
         elapsed = (self._clock.now() - started_at).total_seconds()
         if elapsed > self._timeout_seconds:
             _LOGGER.warning(
@@ -256,11 +344,19 @@ class PlanningService:
                 self._timeout_seconds,
                 extra={"kind": "sourcing"},
             )
-            return result, True
-        return result, False
+            return _Attempt.timed_out()
+        return _Attempt.answered(result)
 
-    def _require_result(self, source: OptionSource, result: object, query: OptionQuery) -> None:
-        """Check a source's answer at the seam. It is replaceable, so it is not trusted."""
+    def _require_result(
+        self, source: OptionSource, result: object, query: OptionQuery
+    ) -> OptionSourceResult:
+        """Check a source's answer at the seam and return it. Replaceable means checked.
+
+        Raising is how the check reports, and it raises the same
+        :class:`~tourganize.platform.errors.ContractViolationError` the contract suite in
+        ``tests/contracts/`` detects — but ``plan`` never lets it out: one broken adapter of a
+        replaceable port degrades to a diagnostic, exactly as one unreachable provider does.
+        """
         name = type(source).__name__
         if type(result) is not OptionSourceResult:
             raise ContractViolationError(
@@ -279,6 +375,7 @@ class PlanningService:
                 f"OptionSource {name!r} was asked for at most {query.slate_size} options and "
                 f"returned {len(result.options)}"
             )
+        return result
 
     def _filtered(
         self, options: Sequence[PlanOption], kind_key: str, requirements: RequirementSet

@@ -88,7 +88,11 @@ class OptionSourceRegistry(Protocol):
 
         Raises :class:`~tourganize.domain.errors.UnknownComponentKindError` when the configured
         profile leaves a Kind with no source at all — a configuration bug rather than a
-        traveller's, and one ``doctor`` reports before a conversation starts.
+        traveller's, and one ``doctor`` reports before a conversation starts. That is the
+        second use of the error the glossary records, and the only one this port has: it is
+        raised **about a Kind**, and a registry problem that names no Kind — a Source Profile
+        listing the same ``source_id`` twice — is a
+        :class:`~tourganize.platform.errors.ConfigurationError` instead.
         """
         ...
 
