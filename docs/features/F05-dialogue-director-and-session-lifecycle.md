@@ -132,12 +132,62 @@ class OptionSlatePlanner(Protocol):                     # implemented by F06's p
 class DialogueDirector:
     def __init__(self, catalog: ComponentCatalog, policy: PriorityPolicy,
                  interpreter: TurnInterpreter, planner: OptionSlatePlanner,
-                 clock: Clock, telemetry: TelemetrySink, settings: DialogueSettings) -> None: ...
+                 clock: Clock, telemetry: TelemetrySink, settings: DialogueSettings,
+                 *, session_id: str | None = None) -> None: ...   # None: a fresh uuid4 hex
     def begin(self, locale: str = "en") -> tuple[AssistantAct, ...]: ...      # emits greet
     def handle(self, turn: UserTurn) -> tuple[AssistantAct, ...]: ...
     @property
     def session(self) -> PlanningSession: ...
 ```
+
+Six places where the shipped code says something different from this file. They are not one
+kind of thing, so each is labelled: **forced** means a rule that outranks this file left no
+choice, **spec-authorised** means this file's own Open questions or Scope allow it, and
+**implementer's choice** means it is a judgement that could have gone the other way and is
+defended here on its merits.
+
+- *(forced)* `TurnInterpreter`, `OptionSlatePlanner` and `DialogueContext` are **defined** in
+  `tourganize/dialogue/ports.py` and re-exported by `tourganize/ports/interpretation.py`, which stays
+  the documented import path — and `tourganize.dialogue` is granted one import permission the domain
+  does not have, `tourganize.ports`, because `DialogueDirector.__init__` names four port types. Both
+  halves are [D17](../architecture/decisions.md), with a third import-linter contract keeping
+  `tourganize.ports` itself free of anything external so the permission admits nothing. Defining the
+  protocols in `ports/interpretation.py` instead would make it and `dialogue/director.py` import each
+  other, which is a real circular import, not a style preference.
+- *(forced)* **F02's Component Status machine gains one edge, `DECLINED -> ELICITING`.** The
+  Definition of done asks for both halves of "decline is about offers, not prohibition", and the
+  second half — a declined Kind the traveller later raises themselves *is* planned — was
+  unreachable while `DECLINED` was terminal. That is a change to F02's rules, so it was made the
+  way this repository requires one to be made: a new edge in `domain/trip/component.py`, an
+  amendment to the glossary's "`DECLINED` is terminal", and
+  [D18](../architecture/decisions.md). The client's rule survives untouched, and now
+  structurally: the only way out of `DECLINED` is a *mention*, a mentioned Kind sits in the
+  Agenda's mentioned band, and a Proactive Offer is drawn from the unmentioned band alone, so
+  nothing can offer a declined Kind a second time.
+- *(implementer's choice)* `DialogueContext` carries one field the Contract block does not list,
+  `focus_field_names`: the field names the focused component's Requirement Schema declares. Without
+  it an interpreter has to guess field names, and a guess that misses raises `UnknownFieldError` on
+  the merge, which is a re-ask the traveller did nothing to deserve. With it, the keyword
+  interpreter offers a value only for a field that exists. It leaks nothing: field *names* are
+  already public in `config/catalog/schemas/`, and the property the block's own comment names — no
+  session object leaks out — still holds.
+- *(implementer's choice)* `INTERPRETING` is a **real state and the hub of the table**: every turn
+  enters it and leaves it for whatever the interpretation implies, so each Resting State needs one
+  outgoing edge instead of five. The Open questions leave this open; the deciding argument is the
+  DoD's own "the transition table has no unreachable state", which a phase-inside-`handle()` reading
+  of `INTERPRETING` could not satisfy while the enum still lists it.
+- *(implementer's choice)* **A turn that leaves nothing to ask and nothing to offer emits
+  `deliver_summary`** — the honest answer in the closed vocabulary — and puts the session back in
+  the Resting State the turn arrived in. It cannot rest in `ELICITING_BLOCKING`: that state is
+  entered by *asking*, and a session sitting there with no Pending Question would tell F11 and
+  F12 it was waiting for an answer to a question nobody asked. The cost is three unwind edges in
+  the transition table (`SOURCING -> GREETING`, `SOURCING -> AWAITING_CHOICE`,
+  `REFINING -> AWAITING_CHOICE`), which is what Replaceability notes calls the table being free
+  to change while the invariants hold.
+- *(implementer's choice)* `TOURGANIZE_INTERPRETER` **accepts** `model` and the Composition Root
+  refuses it by name, saying which feature delivers it. The alternative — leaving `model` out of the
+  choice list — answers "not one of 'keyword'", which is true and useless, and would have made this
+  file's config table wrong.
 
 **Ports consumed:** `ComponentCatalog`, `PriorityPolicy` (F02/F04), `TurnInterpreter` (introduced here,
 keyword adapter here), `OptionSlatePlanner` (introduced here, fake here → real in F06), `Clock`,
@@ -238,3 +288,10 @@ planner returning fixed slates.
 - **Open:** should a mid-slate mention of another Kind ever *preempt* the current component? Current
   answer: no (finish, then re-order the agenda). Worth confirming with the client after the first demo —
   it is a one-line policy change in the `AWAITING_CHOICE` handler.
+- **Open:** `handle()` may return an **empty tuple**. A `SMALL_TALK` turn outside the greeting
+  produces no Act, because no Act in the closed vocabulary means "acknowledged" and inventing one
+  would be inventing wording. F07 therefore has to render "nothing" for a turn that was
+  nevertheless recorded in the Transcript, and the contract is pinned by
+  `test_small_talk_leaves_the_conversation_where_it_was`. The alternative is a twelfth Act — an
+  `acknowledge` with an empty payload — which is a change to `ACT_VOCABULARY` and to every surface,
+  and is the client's call rather than the implementer's.

@@ -5,14 +5,25 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+from conftest import write_keywords
+
 from tourganize.adapters.catalog.priority import FixedOrderPolicy, WeightedCatalogPolicy
 from tourganize.adapters.catalog.yaml import YamlComponentCatalog
 from tourganize.adapters.clock.system import SystemClock
+from tourganize.adapters.interpretation.keyword import KeywordTurnInterpreter
 from tourganize.adapters.telemetry.jsonl import JsonlTelemetrySink
 from tourganize.adapters.telemetry.null import NullTelemetrySink
-from tourganize.application.composition import PENDING_PORTS, build_container
+from tourganize.application.composition import (
+    PENDING_PORTS,
+    build_container,
+    build_dialogue_settings,
+)
+from tourganize.dialogue import DialogueSettings
+from tourganize.platform.errors import ConfigurationError
 from tourganize.platform.settings import Settings
 from tourganize.ports.catalog import ComponentCatalog, PriorityPolicy
+from tourganize.ports.interpretation import TurnInterpreter
 from tourganize.ports.platform import Clock, TelemetrySink
 
 SettingsFactory = Callable[..., Settings]
@@ -31,6 +42,7 @@ def test_the_default_container_wires_every_port_that_has_an_adapter(
     assert isinstance(container.telemetry_sink, TelemetrySink)
     assert isinstance(container.component_catalog, ComponentCatalog)
     assert isinstance(container.priority_policy, PriorityPolicy)
+    assert isinstance(container.turn_interpreter, TurnInterpreter)
 
 
 def test_the_catalog_is_wired_where_settings_point_and_read_no_earlier(
@@ -106,19 +118,60 @@ def test_the_container_reports_its_adapters_by_name(settings_factory: SettingsFa
         "TelemetrySink": "JsonlTelemetrySink",
         "ComponentCatalog": "YamlComponentCatalog",
         "PriorityPolicy": "WeightedCatalogPolicy",
+        "TurnInterpreter": "KeywordTurnInterpreter",
     }
 
 
 def test_ports_awaiting_a_feature_are_declared_not_forgotten() -> None:
-    assert PENDING_PORTS["TurnInterpreter"] == "F05"
+    assert PENDING_PORTS["OptionSlatePlanner"] == "F06"
     assert PENDING_PORTS["LlmGateway"] == "F08"
     assert "PresentationSurface" in PENDING_PORTS
 
 
 def test_a_wired_port_is_removed_from_the_pending_list() -> None:
-    """F02 wires the Component Catalog and F04 the Priority Policy; neither is missing now."""
+    """F02 the catalog, F04 the policy, F05 the interpreter: none of them is missing now."""
     assert "ComponentCatalog" not in PENDING_PORTS
     assert "PriorityPolicy" not in PENDING_PORTS
+    assert "TurnInterpreter" not in PENDING_PORTS
+
+
+def test_the_keyword_interpreter_is_pointed_at_the_configured_phrase_tables(
+    settings_factory: SettingsFactory,
+) -> None:
+    """Proved by what it loads rather than by an accessor for the directory it was given."""
+    settings = settings_factory()
+    write_keywords(settings.config_dir)
+
+    interpreter = build_container(settings).turn_interpreter
+
+    assert isinstance(interpreter, KeywordTurnInterpreter)
+    assert set(interpreter.tables()) == {"en"}
+    assert interpreter.tables()["en"].kinds
+
+
+def test_asking_for_the_model_interpreter_names_the_feature_that_delivers_it(
+    settings_factory: SettingsFactory,
+) -> None:
+    """`model` is a documented value of the key; refusing it by name is why it is accepted."""
+    settings = settings_factory(TOURGANIZE_INTERPRETER="model")
+
+    with pytest.raises(ConfigurationError, match="F08"):
+        build_container(settings)
+
+
+def test_the_dialogue_settings_come_from_the_documented_keys(
+    settings_factory: SettingsFactory,
+) -> None:
+    settings = settings_factory(
+        TOURGANIZE_DIALOGUE_MAX_REASKS="5",
+        TOURGANIZE_DIALOGUE_OPTIONAL_ASK_LIMIT="1",
+        TOURGANIZE_DIALOGUE_OFFER_BATCH="3",
+        TOURGANIZE_AGENDA_FAILURE_SKIP="4",
+    )
+
+    assert build_dialogue_settings(settings) == DialogueSettings(
+        max_reasks=5, optional_ask_limit=1, offer_batch=3, failure_skip=4
+    )
 
 
 def test_the_container_is_frozen(settings_factory: SettingsFactory) -> None:

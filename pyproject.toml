@@ -60,6 +60,9 @@ extend-exclude = [".claude", "docs"]  # vendored skills and prose are not ours t
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF"]
+# An en dash is not a confusable here, it is *input*: a traveller writes "23–28 October", and
+# both the shipped phrase tables and the tests that drive them have to contain the character.
+allowed-confusables = ["\u2013"]
 
 [tool.ruff.lint.per-file-ignores]
 # Tests reach into private parsers deliberately and import fixtures by fixture name.
@@ -100,11 +103,11 @@ root_package = "tourganize"
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
-name = "Domain and dialogue import only the standard library and each other"
+name = "The domain imports only the standard library and itself"
 type = "forbidden"
-source_modules = ["tourganize.domain", "tourganize.dialogue"]
-# Both halves matter. The internal half keeps the domain off the platform; the external half
-# keeps a third-party library out of it. Every distribution named in
+source_modules = ["tourganize.domain"]
+# Both halves matter. The internal half keeps the domain off the platform *and* off the ports;
+# the external half keeps a third-party library out of it. Every distribution named in
 # [project.optional-dependencies] belongs in the list below — adding an extra without adding
 # its import name here silently narrows this contract.
 # tests/architecture/test_import_boundaries.py checks the same rule exhaustively, by AST, so
@@ -125,11 +128,48 @@ forbidden_modules = [
   "weasyprint",
 ]
 
+# The dialogue gets one permission the domain does not: `tourganize.ports`. The Dialogue
+# Director's constructor names four port types, and the two protocols it introduces are typed
+# with Dialogue value objects — see D17 in docs/architecture/decisions.md. The contract below
+# keeps that permission from meaning anything more: `tourganize.ports` itself imports only the
+# standard library, the domain and the dialogue, so the dialogue still reaches nothing external.
 [[tool.importlinter.contracts]]
-name = "Ports never import adapters"
+name = "The dialogue imports only the standard library, the domain and the ports"
+type = "forbidden"
+source_modules = ["tourganize.dialogue"]
+forbidden_modules = [
+  "tourganize.adapters",
+  "tourganize.application",
+  "tourganize.cli",
+  "tourganize.language",
+  "tourganize.platform",
+  "fastmcp",
+  "httpx",
+  "numpy",
+  "pypdf",
+  "sentence_transformers",
+  "textual",
+  "weasyprint",
+]
+
+[[tool.importlinter.contracts]]
+name = "Ports never import adapters, and stay as pure as what they carry"
 type = "forbidden"
 source_modules = ["tourganize.ports"]
-forbidden_modules = ["tourganize.adapters"]
+forbidden_modules = [
+  "tourganize.adapters",
+  "tourganize.application",
+  "tourganize.cli",
+  "tourganize.language",
+  "tourganize.platform",
+  "fastmcp",
+  "httpx",
+  "numpy",
+  "pypdf",
+  "sentence_transformers",
+  "textual",
+  "weasyprint",
+]
 
 [[tool.importlinter.contracts]]
 name = "Adapter sub-packages are independent of each other"
@@ -137,6 +177,7 @@ type = "independence"
 modules = [
   "tourganize.adapters.catalog",
   "tourganize.adapters.clock",
+  "tourganize.adapters.interpretation",
   "tourganize.adapters.options",
   "tourganize.adapters.presentation",
   "tourganize.adapters.telemetry",

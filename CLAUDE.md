@@ -4,15 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is right now
 
-**A specification repository with its foundation, its domain core, its requirement model and its
-planning order built.** F01–F04 have landed: there is an installable `tourganize` package, a test
-suite, a CPU-only container and CI; a Trip Plan made of Plan Components whose *types* are declared as
-data in `config/catalog/components.yaml`; per kind, a Requirement Schema in `config/catalog/schemas/`
-saying what has to be known before that component can be planned; and a Planning Agenda that answers
-"what do we plan next" — mentioned Component Kinds first, then the rest, each band ordered by a
-replaceable Priority Policy. Working commands are `tourganize --version`, `doctor`, `catalog show`,
-`catalog validate`, `catalog gaps` and `catalog agenda`. The remaining 21 feature specs are still the
-plan, implemented one at a time, in order.
+**A specification repository whose planning domain is complete, and now driven by a conversation.**
+F01–F05 have landed: there is an installable `tourganize` package, a test suite, a CPU-only container
+and CI; a Trip Plan made of Plan Components whose *types* are declared as data in
+`config/catalog/components.yaml`; per kind, a Requirement Schema in `config/catalog/schemas/` saying
+what has to be known before that component can be planned; a Planning Agenda that answers "what do we
+plan next" — mentioned Component Kinds first, then the rest, each band ordered by a replaceable
+Priority Policy; and a **Dialogue Director**, the explicit state machine that resolves blocking
+questions before sourcing, presents Option Slates, runs the unbounded choose-or-refine loop, offers the
+Kinds nobody mentioned and closes the session on their answer. It emits **Assistant Acts** and consumes
+**Turn Interpretations** through a port, so a deterministic keyword interpreter drives it today and F08
+replaces that by config. Working commands are `tourganize --version`, `doctor`, `catalog show`,
+`catalog validate`, `catalog gaps` and `catalog agenda`; there is no surface yet, so the dialogue is
+driven from the tests until F07 wires `chat`. The remaining 20 feature specs are still the plan,
+implemented one at a time, in order.
 
 Four kinds of file, with different rules:
 
@@ -23,7 +28,7 @@ Four kinds of file, with different rules:
 | `docs/**` | The deliverable | Edit freely, but honour the consistency rules below. |
 | `tourganize/**`, `tests/**`, `config/**`, `docker/**` | The implementation | Governed by the feature file it belongs to plus the invariants below. |
 
-The next thing to build is `docs/features/F05-dialogue-director-and-session-lifecycle.md`. Read
+The next thing to build is `docs/features/F06-option-sourcing-and-fixture-providers.md`. Read
 `docs/roadmap.md` before starting any implementation work.
 
 ## Reading order for a new session
@@ -33,7 +38,7 @@ The next thing to build is `docs/features/F05-dialogue-director-and-session-life
 2. `docs/architecture/glossary.md` — the ubiquitous language. **Authoritative on naming.**
 3. `docs/architecture/overview.md` — contexts, ports, per-turn data flow, C1–C14 traceability, open
    client questions.
-4. `docs/architecture/decisions.md` — D1–D16, each with cost and reversal path.
+4. `docs/architecture/decisions.md` — D1–D18, each with cost and reversal path.
 5. The one feature file you are implementing, plus the files of its declared dependencies.
 
 A feature file is designed to be self-sufficient: implement from its Scope and Contract sections, and
@@ -107,9 +112,12 @@ conversation with `tourganize eval --only <conversation_id>`.
 
 ## Architecture: the two rules everything follows
 
-1. **The domain imports nothing.** `tourganize/domain/` and `tourganize/dialogue/` may import the
-   standard library and each other — never an HTTP client, LLM SDK, MCP, PDF library, terminal library
-   or database driver.
+1. **The domain imports nothing.** `tourganize/domain/` may import the standard library, itself and
+   `tourganize/dialogue/` — never `tourganize/ports/`, never `tourganize/platform/`, and never an HTTP
+   client, LLM SDK, MCP, PDF library, terminal library or database driver. `tourganize/dialogue/` has
+   exactly one permission more: it may import `tourganize/ports/`, because the Dialogue Director's
+   constructor names four port types (D17). `tourganize/ports/` in turn may import only the standard
+   library and those two pure packages, so the extra permission admits nothing external.
 2. **Everything external enters through a port** — an abstract protocol in `tourganize/ports/` with at
    least one fake. Adapters are selected from `Settings` in exactly one place:
    `tourganize/application/composition.py`.
@@ -141,7 +149,9 @@ all control flow and no wording; the surface and Language Services turn Acts int
 `Clock`, `TelemetrySink` (F01) · `ComponentCatalog` (F02, `schema_for` completed by F03) ·
 `PriorityPolicy` (F04, declared in the domain and re-exported by `ports/catalog.py`, because
 `build_agenda` consumes it and the domain may import nothing) · `TurnInterpreter`,
-`OptionSlatePlanner` (F05) · `OptionSource` (F06) ·
+`OptionSlatePlanner` (F05, declared in `dialogue/ports.py` and re-exported by
+`ports/interpretation.py`, because their contracts are typed with Dialogue value objects — D17) ·
+`OptionSource` (F06) ·
 `PresentationSurface` (F07) · `LlmGateway` (F08) · `LanguageDetector` (F10) ·
 `SessionRepository` (F12) · `ItineraryRenderer` (F13) · `ToolBroker` (F15) ·
 `KnowledgeCorpus`, `TextExtractor`, `PassageSplitter` (F18) · `KnowledgeRetriever`, `EmbeddingModel` (F19).
@@ -175,7 +185,10 @@ guards it; if one starts failing, fix the code, not the test.
   `UnknownFieldError` rather than being ignored — that is what surfaces prompt/schema drift.
 - **Relative dates are resolved before the domain sees them.** F03 accepts only resolved values;
   "next month" is the interpretation layer's problem, against the `Clock` (F05/F08).
-- **One blocking question per Act.**
+- **One blocking question per Act.** After `TOURGANIZE_DIALOGUE_MAX_REASKS` asks on the same Blocking
+  Rule the Director offers the field's example instead, and then marks the component `FAILED` and moves
+  on rather than looping. *Which* of a rule's candidate groups to pursue is asking policy and lives in
+  the Director: the cheapest group to finish, ties broken by declaration order.
 - **The choose-or-refine loop is unbounded** — refinement re-sources the *same* component with an
   incremented `round_index`, and slate history is never discarded.
 - **Proactive offers start only when the mentioned band is empty**; a declined kind is never offered
@@ -192,6 +205,13 @@ guards it; if one starts failing, fix the code, not the test.
   shape may never differ from the port contract.
 - **Feasibility findings are advisory** — they annotate and demote options, they do not silently filter
   them.
+- **The state machine is a table, and every move goes through one guard.** `TRANSITIONS` in
+  `tourganize/dialogue/states.py` is the whole machine; an undeclared move raises
+  `IllegalDialogueTransitionError`, and no state in the table is unreachable from `GREETING`.
+- **A turn after `close` raises `SessionClosedError`.** Resuming a conversation is F12's `resume`,
+  never a silent reopen.
+- **One Turn Ledger entry per `handle()`**, carrying the Dialogue States either side of the turn, the
+  Turn Intent, the focus `kind_key`, the Acts emitted and `PlanningAgenda.explain()`.
 - **Every feature leaves the app runnable**, with previously working paths unaffected.
 
 ## Naming discipline

@@ -274,8 +274,9 @@ class RequirementSet:
             if spec is None:
                 declared = ", ".join(schema.field_names) or "no fields"
                 raise UnknownFieldError(
+                    update.field_name,
                     f"{self.component_kind}: schema {schema.schema_key} does not declare a "
-                    f"field {update.field_name!r}; it declares {declared}"
+                    f"field {update.field_name!r}; it declares {declared}",
                 )
             candidate = _value_of(spec, update)
             standing = merged.get(spec.name)

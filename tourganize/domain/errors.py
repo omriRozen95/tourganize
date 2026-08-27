@@ -13,17 +13,26 @@ imported from — but the seam that checks a replaceable ``PriorityPolicy``'s ou
 ``tourganize.domain.catalog.prioritization`` (F04), so the class has to be reachable from the
 domain to be raised there at all.
 
-The split to remember when adding an error later: a rule the domain owns raises from here; a
-failure of configuration, a port or an adapter raises from ``tourganize.platform.errors``.
+F05's two dialogue errors — :class:`IllegalDialogueTransitionError` and
+:class:`SessionClosedError` — are here for the third variation on the same theme.
+``tourganize.dialogue`` is a pure package too: it may import the standard library, the domain
+and ``tourganize.ports``, and nothing else. An error it raises therefore has to live where it
+can reach it, and one file listing the deliberate failures is worth more than three.
+
+The split to remember when adding an error later: a rule the domain or the dialogue owns
+raises from here; a failure of configuration, a port or an adapter raises from
+``tourganize.platform.errors``.
 """
 
 from __future__ import annotations
 
 __all__ = [
     "ContractViolationError",
+    "IllegalDialogueTransitionError",
     "IllegalTransitionError",
     "InvariantViolationError",
     "RequirementValueError",
+    "SessionClosedError",
     "TourganizeError",
     "UnknownComponentKindError",
     "UnknownFieldError",
@@ -76,7 +85,16 @@ class UnknownFieldError(TourganizeError):
     Deliberately not ignored. An update for a field nobody declared almost always means an
     extraction prompt (F08) and a schema have drifted apart, and a silently dropped value is
     a traveller repeating themselves while the assistant appears not to listen.
+
+    Carries :attr:`field_name` for the reason :class:`RequirementValueError` does: the
+    dialogue turns this into an Act payload naming the field, and a caller that had to
+    re-derive the name by re-walking the batch against the schema would be deriving something
+    the raiser already knew.
     """
+
+    def __init__(self, field_name: str, message: str) -> None:
+        super().__init__(message)
+        self.field_name = field_name
 
 
 class RequirementValueError(TourganizeError):
@@ -93,3 +111,22 @@ class RequirementValueError(TourganizeError):
         self.field_name = field_name
         self.reason_message_key = reason_message_key
         self.detail = detail
+
+
+class IllegalDialogueTransitionError(TourganizeError):
+    """The Dialogue Director was asked for a Dialogue State it cannot legally reach.
+
+    Always a bug in the Director, never a traveller's fault: every state a turn can lead to is
+    a declared edge of ``tourganize.dialogue.states.TRANSITIONS``, so reaching this means the
+    machine and its table have come apart. It is raised rather than logged for exactly that
+    reason — a state machine that quietly ignores an impossible move is one that will later
+    produce an impossible conversation.
+    """
+
+
+class SessionClosedError(TourganizeError):
+    """A turn arrived for a Planning Session that has already closed.
+
+    Not a silent reopen: a closed session stays closed, and picking a conversation back up is
+    F12's ``resume``, which loads the stored session deliberately.
+    """

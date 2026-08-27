@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from tourganize.dialogue import (
+    DEFAULT_MAX_REASKS,
+    DEFAULT_OFFER_BATCH,
+    DEFAULT_OPTIONAL_ASK_LIMIT,
+)
 from tourganize.domain.catalog import DEFAULT_AGENDA_FAILURE_SKIP
+from tourganize.platform.errors import ConfigurationError
 from tourganize.platform.settings import Settings, unrecognised_keys
 
 
@@ -21,6 +29,12 @@ def test_every_documented_default() -> None:
     assert settings.telemetry_path == Path("var/telemetry.jsonl")
     assert settings.priority_policy == "weighted"
     assert settings.agenda_failure_skip == 2
+    assert settings.schema_dir == Path("config/catalog/schemas")
+    assert settings.dialogue_max_reasks == 3
+    assert settings.dialogue_optional_ask_limit == 2
+    assert settings.dialogue_offer_batch == 2
+    assert settings.interpreter == "keyword"
+    assert settings.keyword_config_dir == Path("config/interpretation")
     assert settings.secrets_file is None
     assert dict(settings.secrets) == {}
 
@@ -28,6 +42,56 @@ def test_every_documented_default() -> None:
 def test_the_agenda_skip_default_is_the_domain_s_one_definition_of_it() -> None:
     """One documented default, one definition: the rule it configures lives in the domain."""
     assert Settings.from_env({}).agenda_failure_skip == DEFAULT_AGENDA_FAILURE_SKIP
+
+
+def test_the_dialogue_defaults_are_the_dialogue_s_one_definition_of_them() -> None:
+    """One documented default, one definition: the rules they configure live in the dialogue."""
+    settings = Settings.from_env({})
+
+    assert settings.dialogue_max_reasks == DEFAULT_MAX_REASKS
+    assert settings.dialogue_optional_ask_limit == DEFAULT_OPTIONAL_ASK_LIMIT
+    assert settings.dialogue_offer_batch == DEFAULT_OFFER_BATCH
+
+
+def test_the_dialogue_counts_can_each_be_tuned_by_one_key() -> None:
+    settings = Settings.from_env(
+        {
+            "TOURGANIZE_DIALOGUE_MAX_REASKS": "5",
+            "TOURGANIZE_DIALOGUE_OPTIONAL_ASK_LIMIT": "1",
+            "TOURGANIZE_DIALOGUE_OFFER_BATCH": "3",
+        }
+    )
+
+    assert (settings.dialogue_max_reasks, settings.dialogue_offer_batch) == (5, 3)
+    assert settings.dialogue_optional_ask_limit == 1
+
+
+def test_a_dialogue_count_below_one_is_refused() -> None:
+    """A re-ask limit of zero is a question nobody ever asks."""
+    with pytest.raises(ConfigurationError, match="must be at least 1"):
+        Settings.from_env({"TOURGANIZE_DIALOGUE_MAX_REASKS": "0"})
+
+
+def test_the_keyword_config_dir_follows_the_config_dir() -> None:
+    settings = Settings.from_env({"TOURGANIZE_CONFIG_DIR": "/srv/conf"})
+
+    assert settings.keyword_config_dir == Path("/srv/conf/interpretation")
+
+
+def test_an_explicit_keyword_config_dir_wins_over_the_config_dir() -> None:
+    settings = Settings.from_env(
+        {"TOURGANIZE_CONFIG_DIR": "/srv/conf", "TOURGANIZE_KEYWORD_CONFIG_DIR": "/etc/phrases"}
+    )
+
+    assert settings.keyword_config_dir == Path("/etc/phrases")
+
+
+def test_the_interpreter_key_accepts_the_value_a_later_feature_delivers() -> None:
+    """`model` resolves here and is refused by the Composition Root, which names F08."""
+    assert Settings.from_env({"TOURGANIZE_INTERPRETER": "model"}).interpreter == "model"
+
+    with pytest.raises(ConfigurationError, match="is not one of"):
+        Settings.from_env({"TOURGANIZE_INTERPRETER": "regex"})
 
 
 def test_the_priority_policy_can_be_swapped_by_one_key() -> None:
@@ -102,7 +166,15 @@ def test_unrecognised_keys_are_reported_but_never_fatal() -> None:
 
 def test_the_keys_this_release_reads_are_not_reported_as_unrecognised() -> None:
     """Every key added to the table has to be added to ``KNOWN_KEYS`` in the same change."""
-    environ = {"TOURGANIZE_PRIORITY_POLICY": "fixed", "TOURGANIZE_AGENDA_FAILURE_SKIP": "3"}
+    environ = {
+        "TOURGANIZE_PRIORITY_POLICY": "fixed",
+        "TOURGANIZE_AGENDA_FAILURE_SKIP": "3",
+        "TOURGANIZE_DIALOGUE_MAX_REASKS": "3",
+        "TOURGANIZE_DIALOGUE_OPTIONAL_ASK_LIMIT": "2",
+        "TOURGANIZE_DIALOGUE_OFFER_BATCH": "2",
+        "TOURGANIZE_INTERPRETER": "keyword",
+        "TOURGANIZE_KEYWORD_CONFIG_DIR": "config/interpretation",
+    }
 
     assert unrecognised_keys(environ) == ()
 

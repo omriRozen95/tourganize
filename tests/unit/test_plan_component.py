@@ -28,9 +28,10 @@ ILLEGAL = [
     (S.READY, S.AWAITING_CHOICE),
     (S.SELECTED, S.AWAITING_CHOICE),
     (S.SELECTED, S.DECLINED),
-    (S.DECLINED, S.ELICITING),
+    (S.DECLINED, S.READY),
     (S.DECLINED, S.SOURCING),
     (S.DECLINED, S.SELECTED),
+    (S.DECLINED, S.FAILED),
 ]
 
 
@@ -106,13 +107,23 @@ def test_every_legal_transition_in_the_table_is_walkable() -> None:
     assert walked > 20
 
 
-def test_declined_is_terminal_in_every_direction() -> None:
-    """A declined kind is never offered again in that session — the machine enforces it."""
-    assert LEGAL_TRANSITIONS[S.DECLINED] == frozenset()
+def test_declined_reopens_only_by_eliciting() -> None:
+    """Declining is about *offers*, not prohibition (D18), and the edge is the narrowest one.
+
+    The client's rule — a declined Kind is never offered again in that session — is F05's, and
+    it holds because reopening happens on the traveller's *own* mention, which also marks the
+    Kind mentioned and so takes it out of the band offers are drawn from. What the table has to
+    guarantee is that nothing may source or select a declined component behind their back.
+    """
+    assert LEGAL_TRANSITIONS[S.DECLINED] == frozenset({S.ELICITING})
 
     item = component(S.DECLINED)
     for status in ComponentStatus:
-        assert not item.can_advance_to(status)
+        assert item.can_advance_to(status) is (status is S.ELICITING)
+
+    item.advance_to(S.ELICITING)
+
+    assert item.status is S.ELICITING
 
 
 def test_the_choose_or_refine_loop_is_unbounded() -> None:

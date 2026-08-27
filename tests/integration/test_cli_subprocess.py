@@ -21,6 +21,9 @@ SHIPPED_CATALOG = REPO_ROOT / "config" / "catalog" / "components.yaml"
 #: The Requirement Schemas those kinds name. Pointed at for the same reason as the catalog:
 #: only a subprocess reading the *shipped* files can prove the shipped files are sound.
 SHIPPED_SCHEMAS = REPO_ROOT / "config" / "catalog" / "schemas"
+#: The keyword interpreter's shipped phrase tables, pointed at for the same reason again: the
+#: ``turn_interpreter`` check in ``doctor`` reads them, so this is what proves they parse.
+SHIPPED_KEYWORDS = REPO_ROOT / "config" / "interpretation"
 
 
 def _run(*arguments: str, tmp_path: Path, **extra: str) -> subprocess.CompletedProcess[str]:
@@ -31,6 +34,7 @@ def _run(*arguments: str, tmp_path: Path, **extra: str) -> subprocess.CompletedP
         "TOURGANIZE_CONFIG_DIR": str(tmp_path / "config"),
         "TOURGANIZE_CATALOG_PATH": str(SHIPPED_CATALOG),
         "TOURGANIZE_SCHEMA_DIR": str(SHIPPED_SCHEMAS),
+        "TOURGANIZE_KEYWORD_CONFIG_DIR": str(SHIPPED_KEYWORDS),
         "TOURGANIZE_DATA_DIR": str(tmp_path / "var"),
     }
     environment.update(extra)
